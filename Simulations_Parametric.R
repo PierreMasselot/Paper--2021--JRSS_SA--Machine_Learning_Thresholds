@@ -16,36 +16,8 @@ source("C:/Users/masselpl/Documents/Recherche/# Ressources Perso/R/Fonctions/Uti
 source("C:/Users/masselpl/Documents/Recherche/# Ressources Perso/R/Fonctions/Plot_functions.R")
 
 #---------------------------------------------------
-#                 Initialization
+#                 Relationship functions
 #---------------------------------------------------
-
-sim.name <- "JshapeLinear_X30_L0_noDep_s8"
-SAVE <- FALSE
-
-parameters <- within(list(),{
-  # Parameters
-  B <- 1000 # Number of simulations
-  n <- 5000
-  p <- 2
-  Lsim <- 1
-  
-  # Function parameters
-  obetas <- c(0, 1, 1) # Intercept is the first element
-  ffuns <- c("fJshape", "flinear")
-  fbetas <- list(c(0, 0.05, 0.5, 0.2, 0.1), c(0, .5))   
-  wfuns <- c("wone", "wone")
-  wbetas <- list(c(1, -5/Lsim), 1 / (Lsim + 1))
-  
-  s <- c(.8, .8)
-  extBetas <- c(0, 10, 10)  # Coefficients for a linear function above the threshold.
-                 # Relative to the range of Y
-  
-  XdepOrder <- 0
-  YdepOrder <- 0
-  
-  noise.sd <- .2
-})
-attach(parameters)
 
 # Dose-response functions
 fconstant <- function(x, Betas) Betas
@@ -60,89 +32,85 @@ wone <- function(l, Betas) ifelse(l == 0, 1, 0)
 wconstant <- function(l, Betas) Betas
 wdecay <- function(l, Betas) Betas[1] * exp(Betas[2] * l) 
 
-
-# Object containing results
-results <- list()
-cols <- c("forestgreen", "cornflowerblue", "skyblue", "firebrick", "darkgrey")
-
 #---------------------------------------------------
-#                 Simulation
+#              Data generating function
 #---------------------------------------------------
-
-# Predictors X
-Xsim <- replicate(p, arima.sim(list(ar = XdepOrder), n, runif))
-Xsim <- apply(Xsim, 2, fscaling)
-
-# Mean part
-Ypart <- Xsim
-fTrue <- overall <- list()
-for (j in 1:p){
-  Xlags <- sapply(0:Lsim, Lag, x = Xsim[,j])
-  Xfun <- function(x, l){do.call(ffuns[j], list(x, fbetas[[j]])) * 
-    do.call(wfuns[j], list(l, wbetas[[j]]))
-  }
-  fTrue[[j]] <- outer(seq(0, 1, length.out = 20), 0:Lsim, Xfun)
-  overall[[j]] <- apply(fTrue[[j]], 1, sum)
-  Ypart[,j] <- apply(Xlags, 1, function(x) sum(Xfun(x, 0:Lsim)))
-} 
-Ypart <- apply(Ypart, 2, scale)
-
-linPred <- cbind(1, Ypart) %*% obetas
-
-# Extreme part
-uni.extremes <- mapply(">=", as.data.frame(Xsim), s)
-extremes <- apply(uni.extremes, 1, all)
-
-extBetas <- extBetas * diff(range(linPred, na.rm = T))
-Xext <- mapply("-", as.data.frame(Xsim), s)
-extPred <- ifelse(extremes, cbind(1, Xext) %*% extBetas, 0)
-
-# Plotting the true relationships
-x11(title = "True_relationships")
-par(mfrow = n2mfrow(p), mar = c(1, 1, 3, 1))
-for (j in 1:p){
-  persp(x = seq(0, 1, length.out = 20), y = 0:Lsim, fTrue[[j]], xlab = "x",
-    ylab = "Lag", zlab = "f", main = colnames(Xsim)[j],
-    col = "lightskyblue", theta = 230, phi = 30, ticktype = "detailed")
-}
-
-Xints <- apply(Xsim, 2, cut, 20, labels = FALSE)
-surf_cut <- aggregate(linPred + extPred, by = as.data.frame(Xints), mean, 
-  na.rm = T)
-colnames(surf_cut)[3] <- "Y"
-
-x11(title = "TrueBivariate")
-lattice::wireframe(Y ~ V1 + V2, data = surf_cut, drape = T)
-
-# Response simulation
-Ysim <- replicate(B, linPred + extPred + 
-  arima.sim(list(ar = YdepOrder), n, rnorm, sd = noise.sd), simplify = TRUE)
-
-# Illustration response
-x11(title = "Realization1_dim2")
-plot(Xsim, pch = 16, col = heat.colors(10)[cut(Ysim[,1], 10)], xlab = "X1",
-  ylab = "X2")
-rect(s[1], s[2], par("usr")[2] + 1,  par("usr")[4] + 1, border = "black", 
-  lwd = 3, lty = 2)
+#' Generate data for testing threshold finding methods
+#'
+#' @param B Number of simulated datasets.
+#' @param n Record length of simulated datasets.
+#' @param p Number of indicator variables.
+#' @param Lsim Maximum lag for the relationship between response and indicators.
+#' @param obetas Weights of each indicator's effect on the response.
+#' @param ffuns Dose-response functions. Recycled if necessary.
+#' @param fbetas Parameters of the dose-response functions.
+#' @param wfuns Lag-response functions. Recycled if necessary.
+#' @param wbetas Parameters or lag-response functions.
+#' @param s Thresholds to be found. Must be between 0 and 1.
+#' @param extBetas Parameters for the linear function of extremes.
+#' @param XdepOrder AR order for temporal dependence of indicators.
+#' @param YdepOrder AR ordre for temporal dependence of response.
+#' @param noise.sd Standard deviation of the random part of response, relative
+#'    to the standard deviation of the deterministic part.
+generate.data <- function(B = 1000, n = 5000, p = 2, Lsim = 1, 
+  obetas = 1, ffuns = "fconstant", fbetas = list(), wfuns = "wone", 
+  wbetas = list(), s = .8, extBetas = 1, XdepOrder = 0, YdepOrder = 0,
+  noise.sd = .2)
+{
+  params <- as.list(environment())
   
-x11(title = "Realization1_dim1")
-par(mfrow = n2mfrow(p))
-for (j in 1:p){
-  plot(Xsim[,j], Ysim[,1], pch = 16, xlab = sprintf("X%i", j), ylab = "Y")
-  abline(v = s[j], lwd = 3, lty = 2, col = "red")
+  # Recycling necessary parameters
+  ffuns <- rep_len(ffuns, p)
+  wfuns <- rep_len(wfuns, p)
+  s <- rep_len(s, p)
+  obetas <- rep_len(obetas, p + 1)
+  wbetas <- rep_len(wbetas, p + 1)
+  
+  # Predictors X
+  Xsim <- replicate(p, arima.sim(list(ar = XdepOrder), n, runif))
+  Xsim <- apply(Xsim, 2, fscaling)
+  
+  # Mean part
+  Ypart <- Xsim
+  fTrue <- overall <- list()
+  for (j in 1:p){
+    Xlags <- sapply(0:Lsim, Lag, x = Xsim[,j])
+    Xfun <- function(x, l){do.call(ffuns[j], list(x, fbetas[[j]])) * 
+      do.call(wfuns[j], list(l, wbetas[[j]]))
+    }
+    fTrue[[j]] <- outer(seq(0, 1, length.out = 20), 0:Lsim, Xfun)
+    overall[[j]] <- apply(fTrue[[j]], 1, sum)
+    Ypart[,j] <- apply(Xlags, 1, function(x) sum(Xfun(x, 0:Lsim)))
+  } 
+  Ypart <- apply(Ypart, 2, scale)
+  
+  linPred <- cbind(1, Ypart) %*% obetas
+  
+  # Extreme part
+  uni.extremes <- mapply(">=", as.data.frame(Xsim), s)
+  extremes <- apply(uni.extremes, 1, all)
+  
+  extBetas <- extBetas * diff(range(linPred, na.rm = T))
+  Xext <- mapply("-", as.data.frame(Xsim), s)
+  extPred <- ifelse(extremes, cbind(1, Xext) %*% extBetas, 0)
+
+  # Response simulation
+  Ysim <- replicate(B, linPred + extPred + 
+    arima.sim(list(ar = YdepOrder), n, rnorm, sd = noise.sd), simplify = TRUE)
+  
+  output <- list(Ysim = Ysim, Xsim = Xsim, linPred = linPred, extPred = extPred,
+    fTrue = fTrue, overall = overall, parameters = params)
+  return(output)
 }
 
-x11(title = "Realization1_ACF")
-par(mfrow = c(2,1))
-acf(Ysim[,1], na.action = na.pass, main = "")
-pacf(Ysim[,1], na.action = na.pass, main = "")
 
 #---------------------------------------------------
-#                      CART
+#             Threshold finding methods
 #---------------------------------------------------
 
-CART.apply <- function(yb){
-  datab <- data.frame(Y = yb, Xsim)
+#' CART 
+CART.apply <- function(yb, xb){
+  datab <- data.frame(Y = yb, xb)
   # Grow the tree
   treeb <- rpart(Y ~ ., data = datab, method = "anova", 
     control = rpart.control(minsplit = 10, cp = 0.0001))
@@ -160,34 +128,11 @@ CART.apply <- function(yb){
   list(thresholds = boxb$box[1,], alarms = datab[alarmb,1])
 }
 
-results[["CART"]] <- apply(Ysim, 2, CART.apply)
-
-#---------------------------------------------------
-#                     MARS
-#---------------------------------------------------
-
-MARS.apply <- function(yb){
-  datab <- data.frame(Y = yb, Xsim)
-  # Apply MARS
-  marsb <- earth(Y ~ ., data = na.omit(datab))
-  
-  # Extract alarms
-  uni.alb <- mapply(">=", datab[,-1], 
-    apply(marsb$cuts, 2, max))
-  alarmb <- apply(uni.alb, 1, all) 
-  
-  list(thresholds = apply(marsb$cuts, 2, max), alarms = datab[alarmb,1])
-}
-
-results[["MARS"]] <- apply(Ysim, 2, MARS.apply)
-
-
-#---------------------------------------------------
-#              MARS with interactions
-#---------------------------------------------------
-
-MARS.apply <- function(yb){
-  datab <- data.frame(Y = yb, Xsim)
+#' MARS
+#'
+#' @param p Interaction degree
+MARS.apply <- function(yb, xb, p = 2){
+  datab <- data.frame(Y = yb, xb)
   # Apply MARS
   marsb <- earth(Y ~ ., data = na.omit(datab), degree = 2)
   
@@ -199,16 +144,11 @@ MARS.apply <- function(yb){
   list(thresholds = apply(marsb$cuts, 2, max), alarms = datab[alarmb,1])
 }
 
-results[["MARS_inter"]] <- apply(Ysim, 2, MARS.apply)
-
-
-#---------------------------------------------------
-#                     PRIM
-#---------------------------------------------------
-
-PRIM.apply <- function(yb){
-  xb <- Xsim[complete.cases(yb),]
+#' PRIM
+PRIM.apply <- function(yb, xb){
+  xb <- xb[complete.cases(yb),]
   yb <- na.omit(yb)
+  n <- length(yb)
   
   # Peeling the box
   peelb <- peeling.sequence(yb, xb, alpha = .05, beta.stop = 6/n, 
@@ -224,16 +164,11 @@ PRIM.apply <- function(yb){
     alarms = in.box(xb, boxb$limits, yb))
 }
 
-results[["PRIM"]] <- apply(Ysim, 2, PRIM.apply)
-
-
-#---------------------------------------------------
-#                     Classical
-#---------------------------------------------------
-
-classical.apply <- function(yb){
-  xb <- Xsim[complete.cases(yb),]
+#' Classical
+classical.apply <- function(yb, xb, extremes){
+  xb <- xb[complete.cases(yb),]
   yb <- na.omit(yb)
+  n <- length(yb)
   
   # Extract episodes
   OMt <- floor(quantile(yb, (n - sum(extremes)) / n) / 5) * 5
@@ -252,75 +187,164 @@ classical.apply <- function(yb){
   alarmb <- apply(uni.alb, 1, all)
   
   # Result
-  list(thresholds = thresholds, alarms = yb[alarmb]) 
+  list(thresholds = unlist(thresholds), alarms = yb[alarmb]) 
 }
 
+##############################################################################
+#
+#                            Simulations 
 
-result[["Classical"]] <- apply(Ysim, 2, classical.apply)
+sim.name <- "Test"
+SAVE <- FALSE
 
-#---------------------------------------------------
-#                 Results comparison
-#---------------------------------------------------
+# Important constant parameters
+p <- 2
+s <- .8
+B <- 2
 
-thresholds <- lapply(results, sapply, "[[", "thresholds")
+# Varying parameters between simulations
+Lsim <- 1:5; names(Lsim) <- sprintf("L%s", Lsim)
+extBetas <- list(X10 = c(0,.1,.1), X30 = c(0,.3,.3), X50 = c(0,.5,.5), 
+  X100 = c(0,1,1), X300 = c(0,3,3), X500 = c(0,5,5), X1000 = c(0,10,10))
 
-# All thresholds estimated
-x11(title = "Thresholds")
-par(mfrow = n2mfrow(p))
-for (j in 1:p){
-  jthresh <- sapply(thresholds, "[", j, )
-  boxplot(jthresh, border = cols, lwd = 2, ylab = "Threshold", 
-    main = colnames(Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, xlab = "",
-    varwidth = T)
-  abline(h = s[j], lwd = 3, lty = 2)
-}
+combParam <- expand.grid(1:length(Lsim), 1:length(extBetas))
+nc <- nrow(combParam)
 
-# Bias
-meanThresh <- sapply(thresholds, apply, 1, mean, na.rm = T)
-bias <- meanThresh - matrix(s, nrow = p, ncol = length(results))
+# Other useful object
+cols <- c("forestgreen", "cornflowerblue", "skyblue", "firebrick", "darkgrey")
 
-x11(title = "Bias")
-bp <- barplot(t(bias), col = cols, border = NA, ylab = "Bias", beside = TRUE, 
-  main = colnames(Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, cex.names = 1.2,
-  ylim = range(c(bias, 0)) + diff(range(c(bias, 0))) * c(-.1, .1))
-abline(h = 0)
-text(bp, t(bias), formatC(t(bias), format = "e", digits = 0), 
-  pos = 2 + sign(t(bias)), cex = 1.2, xpd = T)
-outerLegend("topcenter", names(thresholds), fill = cols, bty = "n", ncol = 3)
-
-
-# Mean Square Error
-sDiff <- sapply(thresholds, "-", matrix(s, nrow = p, ncol = B), 
-  simplify = "array")
-RMSE <- apply(sDiff, c(1,3), function(x) sqrt(sum(x^2, na.rm = T)))
-
-x11(title = "RMSE")
-bp <- barplot(t(RMSE), col = cols, border = NA, ylab = "RMSE", beside = TRUE, 
-  main = colnames(Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, cex.names = 1.2,
-  ylim = range(c(RMSE, 0)) + diff(range(c(RMSE, 0))) * c(-.1, .1))
-abline(h = 0)
-text(bp, t(RMSE), formatC(t(RMSE), format = "e", digits = 0), 
-  pos = 2 + sign(t(RMSE)), cex = 1.2, xpd = T)
-outerLegend("topcenter", names(thresholds), fill = cols, bty = "n", ncol = 3)
-
-#---------------------------------------------------
-#                 Saving results
-#---------------------------------------------------
-
-if(SAVE){
-  out.dir <- sprintf("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Simulations/%s", sim.name)
-  if(!dir.exists(out.dir)) dir.create(out.dir, recursive = T)
-  setwd(out.dir)
-
-  graph.names <- c("True_relationships", "True_Bivariate", "Realization1_dim2", 
-    "Realization1_dim1", "realization1_ACF", "Thresholds", "Bias", "RMSE")
-  for (d in 1:length(dev.list())){
-    dev.set(dev.list()[d])
-    dev.print(png, sprintf("%s.png", graph.names[d]), units = "in",
-      width = dev.size()[1], height = dev.size()[1], res = 100)
+#---- Loop for simulations ---=
+for(i in 1:nc){  
+  print(sprintf("%i / %i", i, nc)); flush.console()
+  
+  #---- Generate data
+  dataSim <- generate.data(B = B, Lsim = Lsim[combParam[i,1]], p = p, s = s,
+    obetas = c(0, 1, 1), ffuns = "flinear", fbetas = list(c(0,1), c(0,1)), 
+    wfuns = c("wconstant", "wdecay"), 
+    wbetas = list(1 / (Lsim[combParam[i,1]] + 1), 
+      c(1, -5 / Lsim[combParam[i,1]])),
+    extBetas = extBetas[[combParam[i,2]]], XdepOrder = .6, noise.sd = .1
+  )
+    
+  #---- Apply methods ----
+  results <- list()
+  results[["CART"]] <- apply(dataSim$Ysim, 2, CART.apply, xb = dataSim$Xsim)
+  results[["MARS"]] <- apply(dataSim$Ysim, 2, MARS.apply, xb = dataSim$Xsim)
+  results[["MARS_inter"]] <- apply(dataSim$Ysim, 2, MARS.apply, 
+    xb = dataSim$Xsim, p = p)
+  results[["PRIM"]] <- apply(dataSim$Ysim, 2, PRIM.apply, xb = dataSim$Xsim)
+  results[["Classical"]] <- apply(dataSim$Ysim, 2, classical.apply, 
+    xb = dataSim$Xsim, extremes = dataSim$extPred > 0)
+  
+  #---- Result comparison ----
+  
+  # All thresholds estimated
+  thresholds <- lapply(results, sapply, "[[", "thresholds")
+    
+  # Bias
+  meanThresh <- sapply(thresholds, apply, 1, mean, na.rm = T)
+  bias <- meanThresh - matrix(s, nrow = p, ncol = length(results))
+  
+  # Mean Square Error
+  sDiff <- sapply(thresholds, "-", matrix(s, nrow = p, ncol = B), 
+    simplify = "array")
+  RMSE <- apply(sDiff, c(1,3), function(x) sqrt(sum(x^2, na.rm = T)))
+  
+  #---- Saving Results ----
+  if (SAVE){
+    name <- paste(sim.name, names(Lsim)[combParam[i,1]], 
+      names(extBetas)[combParam[i,2]], sep = "_")
+    out.dir <- sprintf("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Simulations/%s", sim.name)
+    if(!dir.exists(out.dir)) dir.create(out.dir, recursive = T)
+    setwd(out.dir)
+    
+    # Results
+    export_list(dataSim$parameters, file = "Parameters.txt")
+    save(results, bias, RMSE, file = "All_results.RData")
+    
+    # Plots
+    # Plotting the true relationships
+    png(filename = "True_relationships.png")
+    par(mfrow = n2mfrow(p), mar = c(1, 1, 3, 1))
+    for (j in 1:p){
+      persp(x = seq(0, 1, length.out = 20), y = 0:combParam[[1]][i], 
+        dataSim$fTrue[[j]], xlab = "x", ylab = "Lag", zlab = "f", 
+        main = colnames(dataSim$Xsim)[j],
+        col = "lightskyblue", theta = 230, phi = 30, ticktype = "detailed")
+    }
+    dev.off()
+    
+    Xints <- apply(dataSim$Xsim, 2, cut, 20, labels = FALSE)
+    surf_cut <- aggregate(dataSim$linPred + dataSim$extPred, 
+      by = as.data.frame(Xints), mean, na.rm = T)
+    colnames(surf_cut)[3] <- "Y"
+    
+    png(filename = "TrueBivariate.png")
+    lattice::wireframe(Y ~ V1 + V2, data = surf_cut, drape = T)
+    dev.off()
+    
+    # Response illustration
+    png(filename = "Realization1_dim2.png")
+    plot(dataSim$Xsim, pch = 16, 
+      col = heat.colors(10)[cut(dataSim$Ysim[,1], 10)], 
+      xlab = "X1", ylab = "X2")
+    rect(s, s, par("usr")[2] + 1,  par("usr")[4] + 1, 
+      border = "black", lwd = 3, lty = 2)
+    dev.off()
+      
+    png(filename = "Realization1_dim1.png")
+    par(mfrow = n2mfrow(p))
+    for (j in 1:p){
+      plot(dataSim$Xsim[,j], dataSim$Ysim[,1], pch = 16, 
+        xlab = sprintf("X%i", j), ylab = "Y")
+      abline(v = s, lwd = 3, lty = 2, col = "red")
+    }
+    dev.off()
+    
+    png(filename = "Realization1_ACF.png")
+    par(mfrow = c(2,1))
+    acf(dataSim$Ysim[,1], na.action = na.pass, main = "")
+    pacf(dataSim$Ysim[,1], na.action = na.pass, main = "")
+    dev.off()
+    
+    # Thresholds
+    png(filename = "Thresholds.png")
+    par(mfrow = n2mfrow(p))
+    for (j in 1:p){
+      jthresh <- sapply(thresholds, "[", j, )
+      boxplot(jthresh, border = cols, lwd = 2, ylab = "Threshold", xlab = "",
+        main = colnames(dataSim$Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, 
+        varwidth = T)
+      abline(h = s, lwd = 3, lty = 2)
+    }
+    dev.off()
+    
+    # Criteria
+    png(filename = "Bias.png")
+    bp <- barplot(t(bias), col = cols, border = NA, ylab = "Bias", 
+      beside = TRUE, 
+      main = colnames(dataSim$Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, 
+      cex.names = 1.2, 
+      ylim = range(c(bias, 0)) + diff(range(c(bias, 0))) * c(-.1, .1))
+    abline(h = 0)
+    text(bp, t(bias), formatC(t(bias), format = "e", digits = 0), 
+      pos = 2 + sign(t(bias)), cex = 1.2, xpd = T)
+    outerLegend("topcenter", names(thresholds), fill = cols, bty = "n", 
+      ncol = 3)
+    dev.off()
+    
+    png(filename = "RMSE.png")
+    bp <- barplot(t(RMSE), col = cols, border = NA, ylab = "RMSE", 
+      beside = TRUE, 
+      main = colnames(dataSim$Xsim)[j], cex.lab = 1.3, cex.axis = 1.2, 
+      cex.names = 1.2,
+      ylim = range(c(RMSE, 0)) + diff(range(c(RMSE, 0))) * c(-.1, .1))
+    abline(h = 0)
+    text(bp, t(RMSE), formatC(t(RMSE), format = "e", digits = 0), 
+      pos = 2 + sign(t(RMSE)), cex = 1.2, xpd = T)
+    outerLegend("topcenter", names(thresholds), fill = cols, bty = "n", 
+      ncol = 3)
+    dev.off()
   }
-
-  export_list(parameters, file = "Parameters.txt")
-
-  save(results, bias, RMSE file = "All_results.RData")
 }
+
