@@ -15,7 +15,7 @@
 
 # Extract limits of a subset of predictor space defined by a node in rpart
 
-get.box <- function(object, alert.node = NULL, varnames = names(object$ordered))
+get.box <- function(object, alert.node = NULL, varnames = names(object$ordered), type = c("threshold", "box"))
 # object: rpart object.
 # alert.node: node corresponding to the subset. Must be the value in rownames of object$frame. If NULL, take the node with the maximum y mean.
 # varnames: names of the variables for which to obtain the subset.
@@ -26,10 +26,9 @@ get.box <- function(object, alert.node = NULL, varnames = names(object$ordered))
 #     - yfun: mean value in the subset
 #     - node: the node corresponding to the subset
 {
-    require(rpart)
     stopifnot(inherits(object,"rpart"))
-    tree.data <- eval(object$call[[3]])[,varnames]
-    node.box <- apply(tree.data, 2, range)
+    type <- match.arg(type)
+    node.box <- matrix(NA, 2, 2, dimnames = list(NULL, varnames))
     node_list <- object$frame
     if (nrow(node_list) == 1) return(list(box = node.box, support = NA, yfun = NA))
     if (is.null(alert.node)){

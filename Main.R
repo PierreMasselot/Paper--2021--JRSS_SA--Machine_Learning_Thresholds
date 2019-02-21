@@ -6,64 +6,81 @@
 #
 #             Author: Pierre Masselot
 #
-#          Annals of Applied Statistics
+#                    Journal
 #########################################################
+library(hhws)
+library(rpart)
+library(splines)
+library(forecast)
+library(earth)
+library(quantmod)
 
-setwd("C:/...") # Data path
+setwd("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/1 - Thresholds/Paper--Machine-Learning-Thresholds") # Data path
+              
+source("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/PRIM/R/PRIM_functions.R")
+source("Functions_rpartExtractResults.R")
+
+#---------------------------------------------------
+#                 Parameters
+#---------------------------------------------------
+
+# Parameters on data to consider
+which.Y <- "Death"             # The response
+which.X <- c("RH", "Tmax")   # The indicators
+which.months <- 5:9            # the considered months
+
+# Model parameters
+L <- 2         # The lag for indicators
 
 #---------------------------------------------------
 #                 Data Loading
 #---------------------------------------------------
 
 # Load datafile
-data <- read.table("Data.csv", header = T, sep=";", dec = ",")
+dataread <- read.table("Data.csv", header = T, sep=";")
+dataread$Date <- as.POSIXlt(apply(dataread[,1:3], 1, paste, collapse = "-"))
 
-# Extract dates, health issue (Y) and weather variables (X)
-dates <- as.POSIXlt(apply(data[,1:3],1,paste,collapse="-"))
-Y <- data[,4]
-X <- data[,6:5]
+# Extract months of interest
+datatab <- subset(dataread, Month %in% which.months)
+
+# Extract variables of interest
+datatab <- datatab[,c("Date", which.Y, which.X)]
 
 # Number of years, and days of data, and number of weather variables
-nyear <- length(unique(dates$year))
-n <- length(Y)
-p <- ncol(X)
+nyear <- length(unique(datatab$Date$year))
+n <- nrow(datatab)
+p <- length(which.X)
 
 #---------------------------------------------------
 #             Compute Over-mortality
 #---------------------------------------------------
-source("Functions_overmortality.R") # Contains functions used for over-mortality computing
-library(forecast) # Contains the function 'ma' used in 'baseline'
 
-# Compute baseline
-EM <- baseline(y = Y, dates = dates, nyear = 5, side = 1, smoothing.fun = "ma", order = 15)
+# Compute baseline through natural splines
+em.form <- sprintf("%s ~ ns(Date$yday, 4) + ns(Date$year, round(nyear / 10))",
+  which.Y)
+EM <- lm(as.formula(em.form), datatab)$fitted.values
 
 # Compute over-mortality
-OM <- over_mortality(Y, EM)
+datatab$OM <- excess(datatab[,which.Y], EM)
 
 #---------------------------------------------------
 #               Prepare indicators
 #---------------------------------------------------
-library(quantmod) # Contains the function 'Lag'
 
-L <- 2 # Number of previous days to consider in the mean
+# Compute the moving-average
+indicators <- apply(datatab[,which.X], 2, filter, 
+  rep(1 / (L+1), L + 1), sides = 1)
+# To account for breaks in the series
+indicators[which(diff(datatab$Date, L) > L) + L,] <- NA 
 
-# Prepare lagged days
-tmp <- array(NA, c(n, p, L+1), dimnames = list(NULL, colnames(X), 0:L))
-for (j in 1:p) tmp[,j,] <- sapply(0:L, Lag, x = X[,j])
-
-# Compute the mean of lagged days
-indicators <- apply(tmp, c(1,2), mean) 
+# Adding indicators to the data table
+datatab[,sprintf("Z%s", which.X)] <- indicators
 
 #---------------------------------------------------
-#      Keep only summer months (May-September)
+#            Remove NAs from data table
 #---------------------------------------------------
 
-tt <- dates$mon %in% (5:9 - 1)
-dates <- dates[tt]
-OM <- OM[tt]
-indicators <- indicators[tt,]
-
-n <- sum(tt)
+datatab <- na.omit(datatab)
 
 ####################################################
 #                   CART
@@ -271,7 +288,7 @@ boxplot(alerts.list, border = c("forestgreen", "cornflowerblue", "firebrick", gr
 #       Calibration/validation design
 #################################################### 
 
-# Inspired by Hajat, S. et al. Heat–Health Warning Systems: A Comparison of the Predictive Capacity of Different Approaches to Identifying Dangerously Hot Days. American journal of public health 100, 1137–1144 (2010).
+# Inspired by Hajat, S. et al. Heatâ€“Health Warning Systems: A Comparison of the Predictive Capacity of Different Approaches to Identifying Dangerously Hot Days. American journal of public health 100, 1137â€“1144 (2010).
 
 #--------------------------------------------------
 #      Separate calibration/validation samples
