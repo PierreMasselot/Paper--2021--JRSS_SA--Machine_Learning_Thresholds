@@ -14,11 +14,17 @@ library(splines)
 library(forecast)
 library(earth)
 library(quantmod)
+library(RColorBrewer)
+library(sm)
 
 setwd("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/1 - Thresholds/Paper--Machine-Learning-Thresholds") # Data path
               
 source("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/PRIM/R/PRIM_functions.R")
 source("Functions_rpartExtractResults.R")
+source("Threshold_functions.R")
+source("C:/Users/masselpl/Documents/Recherche/# Ressources Perso/R/Fonctions/Plot_functions.R")
+source("C:/Users/masselpl/Documents/Recherche/# Ressources Perso/R/Fonctions/Marc/Plot_functions_Marc.R")
+source("Other_functions.R")
 
 #---------------------------------------------------
 #                 Parameters
@@ -26,11 +32,11 @@ source("Functions_rpartExtractResults.R")
 
 # Parameters on data to consider
 which.Y <- "Death"             # The response
-which.X <- c("RH", "Tmax")   # The indicators
+which.X <- c("Tmin", "Tmax")   # The indicators
 which.months <- 5:9            # the considered months
 
 # Model parameters
-L <- 2         # The lag for indicators
+Lweights <- c(.4, .4, .2)         # The lag for indicators
 
 #---------------------------------------------------
 #                 Data Loading
@@ -67,14 +73,17 @@ datatab$OM <- excess(datatab[,which.Y], EM)
 #               Prepare indicators
 #---------------------------------------------------
 
+L <- length(Lweights)
+indicator.names <- sprintf("Z%s", which.X)
+
 # Compute the moving-average
 indicators <- apply(datatab[,which.X], 2, filter, 
-  rep(1 / (L+1), L + 1), sides = 1)
+  Lweights, sides = 1)
 # To account for breaks in the series
 indicators[which(diff(datatab$Date, L) > L) + L,] <- NA 
 
 # Adding indicators to the data table
-datatab[,sprintf("Z%s", which.X)] <- indicators
+datatab[,indicator.names] <- indicators
 
 #---------------------------------------------------
 #            Remove NAs from data table
@@ -82,293 +91,165 @@ datatab[,sprintf("Z%s", which.X)] <- indicators
 
 datatab <- na.omit(datatab)
 
-####################################################
-#                   CART
-####################################################
-
-library(rpart) # For CART
-library(rpart.plot)  # For plotting the result
-
-source("Functions_rpartExtractResults.R")
-
 #---------------------------------------------------
-#                CART application
+#            Algorithms application
 #---------------------------------------------------
 
-# Tree growing
-# The argument cp = 0.0001 ensures that a large tree is grown  
-# (Note: rpart randomly select a subset of observations to grow the tree for performances purposes. The result may thus be slightly different than shown in the manuscript).
-tree.growing <- rpart(OM ~ ., data = data.frame(OM = OM, indicators), method = "anova", control = rpart.control(minsplit = 10, cp = 0.0001))
-
-# Determine the best subtree (through its complexity parameter 'cp')
-minind <- which.min(tree.growing$cptable[,"xerror"])
-best_cp <- tree.growing$cptable[minind, "CP"]
-
-# Prune the tree
-final.tree <- prune(tree.growing, best_cp)
-
-#--------------------------------------------------
-#                   Results
-#--------------------------------------------------
-
-# Obtain the thresholds
-CART.result <- get.box(final.tree, varnames = c("Tmin", "Tmax"))
-CART.thresholds <- CART.result$box[1,]
-# Threshold for Tmin is equal in this case to its minimum value, which is equivalent to no threshold
-
-# Alerts
-CART.alerts <- indicators[,1] >= CART.result$box[1,1] & indicators[,2] >= CART.result$box[1,2]
-
-#--------------------------------------------------
-#                   Plots
-#--------------------------------------------------
-
-## Tree
-
-cols <- rep("black", nrow(final.tree$frame))
-cexs <- rep(0.8, nrow(final.tree$frame))
-lwds <- rep(1, nrow(final.tree$frame))
-
-path <- colpath_to_node(CART.result$node, final.tree)
-cols[path] <- "forestgreen"
-cexs[path] <- 1.5
-lwds[path] <- 4 
-
-x11() # Figure 2a)
-prp(final.tree, extra = 1, left = FALSE, fallen.leaves = F, col=cols, branch.col=cols, split.col=cols, cex = cexs, branch.lwd = lwds, digits = 3)
-
-## Partition
-
-x11() # Figure 2b)
-par(mar = c(5,4,4,4)+.1)
-plot(indicators, col = "white", xlab = "Tmin", ylab = "Tmax", cex.axis = 1.2, cex.lab = 1.3, pch = 16, cex = 0.8) # Initialize an empty plot
-rect(CART.result$box[1,1], CART.result$box[1,2], par("usr")[2]+1, par("usr")[4]+1, col = "forestgreen", border = NA) # Add background for the alert subset
-points(indicators, pch = 16, cex = 0.8, col = ifelse(CART.alerts, "black", "darkgrey")) # Add datapoints
-add.partition(final.tree, segment.pars = list(lty = 2, col = "black", lwd = 2), leaf.text = "none")
-mtext(side = 4, at = CART.result$box[1,2], text = round(CART.result$box[1,2], digits = 1), col = "forestgreen", cex = 1.5, line = .5, las = 1) # Add text for threshold on Tmax
-box()
-
-
-####################################################
-#                   MARS
-#################################################### 
-
-library(earth) # contains MARS
+results <- list()
+results[["CART"]] <- CART.apply(datatab$OM, datatab[,indicator.names])
+results[["MARS"]] <- MARS.apply(datatab$OM, datatab[,indicator.names], p = p)
+results[["PRIM"]] <- PRIM.apply(datatab$OM, datatab[,indicator.names])
 
 #---------------------------------------------------
-#                MARS application
+#            Results analysis
 #---------------------------------------------------
 
-MARS.result <- earth(x = indicators, y = OM)
+# Add reference (Chebana et al. 2013)
+refThresh <- c(20, 33)
+uni.alb <- mapply(">=", datatab[,indicator.names], refThresh)
+alarmlogi <- apply(uni.alb, 1, all)
+alarmRef <- datatab$OM[alarmlogi]
+names(alarmRef) <- which(alarmlogi)
+results[["Reference"]] <- list(thresholds = refThresh, alarms = alarmRef)
+
+# Extract thresholds and alarms for each method
+thresholds <- sapply(results, "[[", "thresholds")
+alarms <- sapply(results, "[[", "alarms")
+
+# Analyse basic statistics of alarms
+alarms.n <- sapply(alarms, length)
+alarms.mean <- sapply(alarms, mean)
+
+# Compare to a predefined cutpoints
+cutPts <- seq(30, 60, 5)
+sensitivity <- falseAlarms <- specificity <- youdenJ <- 
+  precision <- F2 <- list()
+for (i in 1:length(cutPts)){
+  trueAlarms <- episodes(datatab$OM, cutPts[i])
+  found <- lapply(alarms, function(x) trueAlarms[trueAlarms$t %in% names(x),])
+  sensitivity[[i]] <- sapply(found, function(x) nrow(x) / nrow(trueAlarms))
+  falseAlarms[[i]] <- sapply(alarms, 
+    function(x) sum(!names(x) %in% trueAlarms$t))
+  specificity[[i]] <- 1 - falseAlarms[[i]] / (n - nrow(trueAlarms))
+  youdenJ[[i]] <- sensitivity[[i]] + specificity[[i]] - 1
+  precision[[i]] <- sapply(alarms, function(x) 
+    mean(as.integer(names(x)) %in% trueAlarms$t))
+  F2[[i]] <- sapply(alarms, function(x) 
+    Fscore(as.integer(names(x)), trueAlarms$t, 2))
+}
 
 #---------------------------------------------------
-#                Extracting the result
+#            Bootstrap simulations
 #---------------------------------------------------
+B <- 1000
 
-#Threshold
-MARS.thresholds <- apply(MARS.result$cuts, 2, max) # Taking the two extremal cuts
+# Create data blocks
+datablock <- split(datatab, datatab$Date$year)
+bpool <- 1:length(datablock)
 
-# Alerts
-MARS.alerts <- indicators[,1] >= MARS.thresholds[1] & indicators[,2] >= MARS.thresholds[2]
+# Draw bootstrap samples
+bsamples <- replicate(B, sample(datablock, replace = T), simplify = F)
+bsamples <- lapply(bsamples, Reduce, f = "rbind")
 
-#--------------------------------------------------
-#                     Plot
-#--------------------------------------------------
+# Apply algorithms
+bootRes <- list()
+bootRes[["CART"]] <- lapply(bsamples, function(dat) 
+  CART.apply(dat$OM, dat[,indicator.names]))
+bootRes[["MARS"]] <- lapply(bsamples, function(dat) 
+  MARS.apply(dat$OM, dat[,indicator.names]))
+bootRes[["PRIM"]] <- lapply(bsamples, function(dat) 
+  PRIM.apply(dat$OM, dat[,indicator.names]))
 
-x11() # Figure 3
-par(mar = c(5,4,4,4)+.1)
-plot(indicators, col = "white", xlab = "Tmin", ylab = "Tmax", cex.axis = 1.2, cex.lab = 1.3, pch = 16, cex = 0.8) # Initialize an empty plot
-rect(MARS.thresholds[1], MARS.thresholds[2], par("usr")[2]+1, par("usr")[4]+1, col = "cornflowerblue", border = NA) # Add background for the alert subset
-points(indicators, pch = 16, cex = 0.8, col = ifelse(MARS.alerts, "black", "darkgrey"))
-abline(v = unique(MARS.result$cuts[MARS.result$cuts[,1]!=0,1]), lty = 2, lwd = 2) # Add cuts on Tmin
-abline(h = unique(MARS.result$cuts[MARS.result$cuts[,2]!=0,2]), lty = 2, lwd = 2) # Add cuts on Tmax
-mtext(side = 3, at = MARS.thresholds[1], text = round(MARS.thresholds[1], digits = 1), col = "cornflowerblue", cex = 1.5, line = .5) # Add text for threshold on Tmin
-mtext(side = 4, at = MARS.thresholds[2], text = round(MARS.thresholds[2], digits = 1), col = "cornflowerblue", cex = 1.5, line = .5, las = 1) # Add text for threshold on Tmax
-box()
+# Obtain thresholds
+bootThresh <- lapply(bootRes, sapply, "[[", "thresholds")
 
+# Bootstrap estimates of bias and standard error
+bootMean <- sapply(bootThresh, apply, 1, mean, na.rm = T)
+bias <- bootMean - thresholds[, names(bootRes)]
 
-####################################################
-#                   PRIM
-#################################################### 
-
-source("Functions_PRIM.R")
-
-#---------------------------------------------------
-#                PRIM application
-#---------------------------------------------------
-
-# Apply the peeling algorithm with a peeling fraction of 5%, a stopping criterion of 6 observations and the constraint that only the box can shrink only through its lower sides.
-peeling.result <- peeling.sequence(OM, indicators, alpha = .05, beta.stop = 6/n, peeling.side = "left")
-
-# Extract the final box
-chosen.support <- 10 # In this case, the box containing 10 observations is chosen since the average OM only slightly increases in further steps
-peeled.box <- extract.box(peeling.result, chosen.support/n)
-
-# Optional: refine the boundaries of the box by pasting
-PRIM.result <- pasting.sequence(OM, indicators, small.box = peeled.box$limits, peeling.side = "left", alpha = 0.01)
+bootSE <- sapply(bootThresh, apply, 1, sd, na.rm = T)
 
 #---------------------------------------------------
-#                Extracting the results
+#                 Plots
 #---------------------------------------------------
+respath <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/ArticleV5"
 
-#Thresholds
-PRIM.thresholds <- PRIM.result$limits[1,]
+colPal <- brewer.pal(9, "Greys")
+cols <- c("forestgreen", "cornflowerblue", "firebrick", "black")
 
-# Alerts
-PRIM.alerts <- indicators[,1] >= PRIM.thresholds[1] & indicators[,2] >= PRIM.thresholds[2]
+# Visual representation of thresholds
+x11() 
+par(mar = c(5,4,4,7)+.1)
+plot(datatab[,indicator.names], col = colPal[cut(datatab$OM, 9)], 
+  xlab = which.X[1], ylab = which.X[2], cex.axis = 1.2, 
+  cex.lab = 1.3, pch = 16, cex = 0.8, 
+  xlim = c(10, max(datatab[,indicator.names[1]])),
+  ylim = c(20, max(datatab[,indicator.names[2]])))
+for(i in 1:length(results)){
+  rect(max(thresholds[1,i], par("usr")[1] - 1, na.rm = T), 
+    max(thresholds[2,i], par("usr")[3] - 1, na.rm = T), 
+    par("usr")[2] + 1, par("usr")[4] + 1,
+    border = cols[i], lwd = 2, lty = i)
+}
+image.scale(range(datatab$OM), colPal, zlab = "OM", 
+  formatC.pars = list(digits = 0, format = "f"))
+outerLegend("topcenter", names(results), lwd = 3, 
+  lty = 1:(length(results) + 1), col = cols, ncol = 3, bty = "n")
+  
+dev.print(png, filename = sprintf("%s/Thresholds.png", respath), units = "in",
+  res = 100)
 
-#--------------------------------------------------
-#                     Plots
-#--------------------------------------------------
+# Sensitivity and specificity  
+x11()
+par(mfrow = c(3, 1), mar = c(5, 5, 4, 2) + .1)
+matplot(cutPts, t(as.data.frame(sensitivity)), type = "b", col = cols,
+  pch = 14 + 1:length(results), ylab = "Sensitivity", 
+  cex = 1.5, lwd = 3, cex.lab = 1.5, cex.axis = 1.2, xlab = "")
+text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "a)", 
+  cex = 3, xpd = T, adj = c(-0.5,1.2))
+outerLegend("topcenter", names(results), lwd = 3, pch = 14 + 1:length(results), 
+  lty = 1:(length(results) + 1), col = cols, ncol = 4, bty = "n", cex = 1.5,
+  pt.cex = 2)
+matplot(cutPts, t(as.data.frame(precision)), type = "b", col = cols,
+  pch = 14 + 1:length(results),  ylab = "Precision", 
+  cex = 1.5, lwd = 3, cex.lab = 1.5, cex.axis = 1.2, xlab = "")
+text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "b)", 
+  cex = 3, xpd = T, adj = c(-0.5,1.2))
+matplot(cutPts, t(as.data.frame(F2)), type = "b", col = cols,
+  pch = 14 + 1:length(results), xlab = "Cut point", ylab = expression(F[2]), 
+  cex = 1.5, lwd = 3, cex.lab = 1.5, cex.axis = 1.2)
+text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "c)", 
+  cex = 3, xpd = T, adj = c(-0.5,1.2))
+  
+dev.print(png, filename = sprintf("%s/Performances.png", respath), units = "in",
+  res = 100)
 
-# Plot of the peeling sequence to choose the best box
-x11() # Figure 4a)
-plot(round(peeling.result$support*n), peeling.result$yfun, type = "b", xlab = "Observation number", ylab = "Average Over-mortality", pch = 21, bg = c("white","firebrick")[1+(peeling.result$support*n <= chosen.support)], col = "black", log = "x", cex.axis = 1.2, cex.lab = 1.3, xlim = rev(range(peeling.result$support*n)))
-abline(v = chosen.support, lty = 2, lwd = 3, col = "firebrick")
-mtext(side = 3, at = chosen.support, text = chosen.support, cex = 1.5, col = "firebrick", line = .5)
+# Bootstrap results
+x11()
+par(mfrow = c(p, 1), cex.axis = 1.2, cex.lab = 1.3, mar = c(4, 5, 3, 2))
+#layout(matrix(1:4, 4, 1, byrow = T), height = c(1, 4, 1, 4))
+for (i in 1:p){    
+  ylim <- range(c(lapply(bootThresh, "[", i, ), 
+    bootMean[i,] + bootSE[i,], bootMean[i,] - bootSE[i,]),
+    na.rm = T)
+  vp <- vioplotMarc(lapply(bootThresh, "[", i, ), col = NA, border = cols, 
+    pchMed = NA, pchMean = 16, rectBorder = NA, pchcex = 1,
+    colMean = "black", pchMod = NA, drawMod = F, 
+    lwd =2, lwdMed = NA, names = names(bootRes), ylim = ylim)
+  title(ylab = "Threshold (°C)")
+  abline(v = 2:length(bootRes) - 0.5, lty = 3, col = "darkgrey")
+  abline(v = 1:length(bootRes))
+  segments(1:length(bootRes) - 0.48, thresholds[i, names(bootRes)], 
+    1:length(bootRes) + 0.48, thresholds[i, names(bootRes)],
+    lwd = 3, lty = 2)
+  arrows(1:length(bootRes), bootMean[i,], 1:length(bootRes),
+    bootMean[i,] + bootSE[i,], angle = 90, length = .05,
+    lwd = 2)
+  arrows(1:length(bootRes), bootMean[i,], 1:length(bootRes),
+    bootMean[i,] - bootSE[i,], angle = 90, length = .05,
+    lwd = 2)
+  title(main = sprintf("%s) %s", letters[i], which.X[i]))
+}
 
-# Plot of the box
-x11() # Figure 4b)
-par(mar = c(5,4,4,4)+.1)
-plot(indicators, col = "white", xlab = "Tmin", ylab = "Tmax", cex.axis = 1.2, cex.lab = 1.3, pch = 16, cex = 0.8) # Initialize an empty plot
-rect(PRIM.thresholds[1], PRIM.thresholds[2], par("usr")[2]+1, par("usr")[4]+1, col = "firebrick", lty = 2, lwd = 2) # Add background for the alert subset
-points(indicators, pch = 16, cex = 0.8, col = ifelse(PRIM.alerts, "black", "darkgrey"))
-mtext(side = 3, at = PRIM.thresholds[1], text = round(PRIM.thresholds[1], digits = 1), col = "firebrick", cex = 1.5, line = .5) # Add text for threshold on Tmin
-mtext(side = 4, at = PRIM.thresholds[2], text = round(PRIM.thresholds[2], digits = 1), col = "firebrick", cex = 1.5, line = .5, las = 1) # Add text for threshold on Tmax
-box()
-
-####################################################
-#       Comparison with classical method
-#################################################### 
-
-library(Kendall)
-
-source("Functions_classicalMethod.R")
-
-#--------------------------------------------------
-#        Determine over-mortality episodes
-#--------------------------------------------------
-
-# Estimation of OM trend
-MK.OM <- MannKendall(OM) # The trend is not significant
-trend.OM <- coef(lm(OM ~ t, data = data.frame(OM = OM, t = 1:n)))[2] # Estimation of the trend. Not used in the following
-
-# extract excesses
-OMT <- episodes(OM, u = 40, covariates = X[tt,], uc = c(0, 28), l = 3) # Over-mortality threshold fixed at 40%
-
-
-#--------------------------------------------------
-#             Find thresholds
-#--------------------------------------------------
-
-# Try different thresholds combinations. We force the weights to be 1/3 here for consistency with other methods
-classical.result <- find.threshold(aperm(tmp[tt,,], c(1,3,2)), episodes=OMT$excesses, alphas = 1/3, u.grid=list(10:20,30:40), trim = 30)
-
-# Choose best thresholds according to sensitivity and specificity
-chosen.index <- 9
-classical.thresholds <- as.numeric(classical.result[9, colnames(X)])
-
-# Alerts
-classical.alerts <- indicators[,1] >= classical.thresholds[1] & indicators[,2] >= classical.thresholds[2]
-
-
-#--------------------------------------------------
-#        Comparison with proposed methods
-#--------------------------------------------------
-
-# gather all alerts into one list
-alerts.list <- list(CART = OM[CART.alerts], MARS = OM[MARS.alerts], PRIM = OM[PRIM.alerts], Classical = OM[classical.alerts])
-
-# Boxplot of the alerts OM
-x11() #Figure5a)
-boxplot(alerts.list, border = c("forestgreen", "cornflowerblue", "firebrick", grey(.3)), lwd = 2, ylim = range(OM), ylab = "Over-mortality", cex.lab = 1.3, cex.axis = 1.2, xlab = "", varwidth = T)
-
-
-####################################################
-#       Calibration/validation design
-#################################################### 
-
-# Inspired by Hajat, S. et al. Heat–Health Warning Systems: A Comparison of the Predictive Capacity of Different Approaches to Identifying Dangerously Hot Days. American journal of public health 100, 1137–1144 (2010).
-
-#--------------------------------------------------
-#      Separate calibration/validation samples
-#--------------------------------------------------
-
-# Order summers' temperatures
-Tmean <- apply(indicators, 1, mean) # We use mean temperature to sort summers' heat
-summer_heat <- aggregate(Tmean, by = list(year = dates$year), mean) # mean temperature of each year. 
-summer_ord <- order(summer_heat[,2], decreasing = T) # decreasing order
-
-# Attribute odd-ordered years to the calibration sample and even-ordered years to the validation sample
-sample.ind <- rep_len(1:2, nyear)
-names(sample.ind) <- summer_heat[summer_ord,1] # years with a 1 are attributed to the calibration sample
-
-# Attribute each day to a sample
-sample.day <- sample.ind[as.character(dates$year)] # attribute 1 or 2 to each day
-# calibration
-indicators.calib <- indicators[sample.day == 1,]
-OM.calib <- OM[sample.day == 1]
-# validation
-indicators.valid <- indicators[sample.day == 2,]
-OM.valid <- OM[sample.day == 2]
-
-#--------------------------------------------------
-#                      CART
-#--------------------------------------------------
-
-# calibrate CART
-tree.calib <- rpart(OM ~ ., data = data.frame(OM = OM.calib, indicators.calib), method = "anova", control = rpart.control(minsplit = 10, cp = 0.0001))
-minind <- which.min(tree.calib$cptable[,"xerror"])
-best_cp <- tree.calib$cptable[minind, "CP"]
-final.tree.calib <- prune(tree.calib, best_cp)
-CART.calib <- get.box(final.tree.calib, varnames = c("Tmin", "Tmax"))
-CART.thresholds.calib <- CART.calib$box[1,]
-
-# Alerts on validation sample
-CART.alerts.valid <- indicators.valid[,1] >= CART.thresholds.calib[1] & indicators.valid[,2] >= CART.thresholds.calib[2]
-
-#--------------------------------------------------
-#                      MARS
-#--------------------------------------------------
-
-# calibration
-MARS.calib <- earth(x = indicators.calib, y = OM.calib)
-MARS.thresholds.calib <- apply(MARS.calib$cuts, 2, max) # Taking the two extremal cuts
-
-# Alerts
-MARS.alerts.valid <- indicators.valid[,1] >= MARS.thresholds.calib[1] & indicators.valid[,2] >= MARS.thresholds.calib[2]
-
-#--------------------------------------------------
-#                      PRIM
-#--------------------------------------------------
-
-# Calibration
-peeling.calib <- peeling.sequence(OM.calib, indicators.calib, alpha = .05, beta.stop = 6/n, peeling.side = "left")
-peeled.calib <- extract.box(peeling.calib, 8/length(OM.calib)) # chosen after inspecting the peeling trajectory
-PRIM.calib <- pasting.sequence(OM.calib, indicators.calib, small.box = peeled.calib$limits, peeling.side = "left", alpha = 0.01)
-PRIM.thresholds.calib <- PRIM.calib$limits[1,]
-
-# Validation
-PRIM.alerts.valid <- indicators.valid[,1] >= PRIM.thresholds.calib[1] & indicators.valid[,2] >= PRIM.thresholds.calib[2]
-
-#--------------------------------------------------
-#                Classical method
-#--------------------------------------------------
-
-# Calibration
-# We do not look for a trend since none was found in the whole sample
-OMT.calib <- episodes(OM.calib, u = 30, covariates = X[tt,][sample.day == 1,], uc = c(0, 28), l = 3) # u chosen at 30 here to keep an adequate number of OM episodes
-classical.calib <- find.threshold(aperm(tmp[tt,,][sample.day == 1,,], c(1,3,2)), episodes=OMT.calib$excesses, alphas = 1/3, u.grid=list(10:20,30:40), trim = 30)
-classical.thresholds.calib <- as.numeric(classical.calib["12", colnames(X)])
-
-# Validation
-classical.alerts.valid <- indicators.valid[,1] >= classical.thresholds.calib[1] & indicators.valid[,2] >= classical.thresholds.calib[2]
-
-#--------------------------------------------------
-#                Boxplots
-#--------------------------------------------------
-
-valid.list <- list(CART = OM.valid[CART.alerts.valid], MARS = OM.valid[MARS.alerts.valid], PRIM = OM.valid[PRIM.alerts.valid], Classical = OM.valid[classical.alerts.valid])
-
-x11() #Figure5b)
-boxplot(valid.list, border = c("forestgreen", "cornflowerblue", "firebrick", grey(.3)), lwd = 2, ylim = range(OM), ylab = "Over-mortality", cex.lab = 1.3, cex.axis = 1.2, xlab = "", varwidth = T)
+dev.print(png, filename = sprintf("%s/Bootstrap_result.png", respath), units = "in",
+  res = 100)
