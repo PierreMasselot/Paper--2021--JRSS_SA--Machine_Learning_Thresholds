@@ -58,7 +58,7 @@ wdecay <- function(l, Betas) Betas[1] * exp(Betas[2] * l)
 #' @param YdepOrder AR ordre for temporal dependence of response.
 #' @param noise.sd Standard deviation of the random part of response, relative
 #'    to the standard deviation of the deterministic part.
-generate.data <- function(B = 1000, n = 5000, p = 2, Lsim = 1, 
+generate.data <- function(B = 5000, n = 5000, p = 2, Lsim = 1, 
   obetas = 1, ffuns = "fconstant", fbetas = list(), wfuns = "wone", 
   wbetas = list(), s = .8, stype = c("quantile", "absolute"), extBetas = 1,
   XdepOrder = 0, YdepOrder = 0, noise.sd = .2)
@@ -128,7 +128,7 @@ respath <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats
 # Important constant parameters
 p <- 2
 s <- .95  # Quantile
-B <- 10
+B <- 5000
 
 # Varying parameters between simulations
 varParams <- list()
@@ -190,35 +190,38 @@ for(i in 1:nc){
     
   #---- Apply methods ----
   results <- list()
-  results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, xb = dataSim$Xsim)
+  results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, 
+    xb = dataSim$Xsim, zb = dataSim$Xsim)
   results[["MARS"]] <- parApply(cl, dataSim$Ysim, 2, MARS.apply, 
     xb = dataSim$Xsim, degree = p)
-  results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, xb = dataSim$Xsim)
-  results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, xb = dataSim$Xsim, 
-    backfit = T, numcut = 1)
-  results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, xb = dataSim$Xsim)
+  results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, 
+    xb = dataSim$Xsim, zb = dataSim$Xsim)
+  results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, 
+    xb = dataSim$Xsim, backfit = T, numcut = 1)
+  results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, 
+    xb = dataSim$Xsim)
   
   #---- Result comparison ----
   
-  # All thresholds estimated
-  thresholds <- lapply(results, sapply, "[[", "thresholds")
   sTrue <- mapply("quantile", as.data.frame(dataSim$Xsim), s)
     
   # Bias
-  meanThresh <- sapply(thresholds, apply, 1, mean, na.rm = T)
+  meanThresh <- sapply(results, apply, 1, mean, na.rm = T)
   bias <- meanThresh - matrix(sTrue, nrow = p, ncol = length(results))
   biasRes[[i]] <- bias
   
   # Standard error
-  SE <- sapply(thresholds, apply, 1, sd, na.rm = T)
+  SE <- sapply(results, apply, 1, sd, na.rm = T)
   SEres[[i]] <- SE
   
   # Mean Square Error
-  sDiff <- sapply(thresholds, "-", matrix(sTrue, nrow = p, ncol = B), 
+  sDiff <- sapply(results, "-", matrix(sTrue, nrow = p, ncol = B), 
     simplify = "array")
   RMSE <- apply(sDiff, c(1,3), function(x) sqrt(sum(x^2, na.rm = T)))
   RMSEres[[i]] <- RMSE
 }
+
+stopCluster(cl)
 
 if (SAVE){ 
   save(combParam, biasRes, SEres, RMSEres, 

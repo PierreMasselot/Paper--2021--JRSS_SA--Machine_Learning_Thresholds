@@ -21,6 +21,7 @@ library(partykit)
 library(AIM)
 library(primr)
 library(colorspace)
+library(parallel)
 
 setwd("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/1 - Thresholds/Paper--Machine-Learning-Thresholds") # Repo
          
@@ -44,7 +45,7 @@ cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod",
   "slategrey", "black")
 
 SAVE <- FALSE # Save the results?
-result_path <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Article V8"
+result_path <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Article V9"
 
 #---------------------------------------------------
 #                 Data Loading
@@ -56,26 +57,16 @@ dataread$Date <- as.POSIXlt(apply(dataread[,1:3], 1, paste, collapse = "-"))
 
 # Extract months of interest
 datatab <- subset(dataread, Month %in% which.months)
+datatab$dos <- unlist(tapply(datatab[,1], datatab$Year, seq_along))
 
 # Extract variables of interest
-datatab <- datatab[,c("Date", which.Y, which.X)]
+datatab <- datatab[,c(which.Y, which.X, "Year", "dos")]
+datatab$Tmoy <- rowMeans(datatab[,which.X])
 
 # Number of years, and days of data, and number of weather variables
-nyear <- length(unique(datatab$Date$year))
+nyear <- length(unique(datatab$Year))
 n <- nrow(datatab)
 p <- length(which.X)
-
-#---------------------------------------------------
-#             Compute Over-mortality
-#---------------------------------------------------
-
-# Compute baseline through natural splines
-em.form <- sprintf("%s ~ ns(Date$yday, 4) + ns(Date$year, round(nyear / 10))",
-  which.Y)
-EM <- lm(as.formula(em.form), datatab)$fitted.values
-
-# Compute over-mortality
-datatab$OM <- excess(datatab[,which.Y], EM)
 
 #---------------------------------------------------
 #               Prepare indicators
@@ -86,7 +77,7 @@ L <- length(Lweights)
 indicator.names <- which.X
 
 # Compute the moving-average
-indicators <- apply(datatab[,which.X], 2, filter, 
+indicators <- apply(datatab[,which.X], 2, stats::filter, 
   Lweights, sides = 1)
 # To account for breaks in the series
 indicators[which(diff(datatab$Date, L) > L) + L,] <- NA 
@@ -107,7 +98,8 @@ n <- nrow(datatab)
 results <- list()
 
 #----- Model-based regression trees (MOB) -----
-treefit <- lmtree(OM ~ Tmin + Tmax, data = datatab, minsize = 4)
+treefit <- glmtree(Death ~ Tmoy + ns(dos, 4) + ns(Year, round(nyear / 10)) | 
+  Tmin + Tmax, data = datatab, family = "quasipoisson", minsize = 10)
 
 # Extract thresholds from the tree object
 results[["MOB"]] <- extractThresholds_party(treefit)$thresholds
@@ -115,7 +107,8 @@ results[["MOB"]] <- extractThresholds_party(treefit)$thresholds
 # Plot the tree
 x11(width = 17, height = 7)
 plot(treefit, ip_args = list(id = FALSE, pval = FALSE), 
-  tp_args = list(id = FALSE))
+  terminal_panel = node_bivplot, 
+  tp_args = list(which = 1, lwd = 10, id = FALSE, linecol = cols[1]))
   
 if (SAVE){
   dev.print(png, filename = sprintf("%s/FigS1_MOB.png", result_path), 
@@ -124,7 +117,9 @@ if (SAVE){
 }
 
 #----- Multivariate adaptive regression splines (MARS) -----
-marsfit <- earth(OM ~ Tmin + Tmax, data = datatab, degree = p, endspan = 4)
+marsfit <- earth(Death ~ Tmin + Tmax + dos + Year, 
+  data = datatab, degree = p, endspan = 10, 
+  glm = list(family = "quasipoisson"))
 
 # Extract thresholds
 results[["MARS"]] <- apply(marsfit$cuts[,indicator.names], 2, max)
@@ -134,12 +129,13 @@ surfgrid <- do.call(expand.grid,
   lapply(datatab[,indicator.names], 
     function(x) seq(min(x), max(x), length.out = 1000) )
 )
-surf <- matrix(predict(marsfit, surfgrid, type = "response"), nrow = 1000)
+datpred <- cbind(surfgrid, dos = mean(datatab$dos), Year = mean(datatab$Year))
+surf <- matrix(predict(marsfit, datpred, type = "response"), nrow = 1000)
 
 x11()
 filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surf,
-  color.palette = diverge_hcl, zlim = c(-110, 110), cex.axis = 1.2,
-  key.title = title(main = "OM", cex = 1.3), 
+  color.palette = diverge_hcl, zlim = range(surf), cex.axis = 1.2,
+  key.title = title(main = "Death", cex = 1.3), 
   plot.title = {
     title(xlab = indicator.names[1], cex.lab = 1.3)
     title(ylab = indicator.names[2], cex.lab = 1.3)
@@ -162,15 +158,27 @@ if (SAVE){
 
 
 #----- Patient rule-induction method (PRIM) -----
+
 # Initial peeling
-peelres <- peeling(datatab$OM, datatab[,indicator.names], 
-  beta.stop = 4/n, peeling.side = -1)
+peelres <- peeling(datatab$Death, datatab[,indicator.names], 
+  beta.stop = 10/n, peeling.side = -1,
+  obj.fun = function(y, x, inbox){
+    y <- y[inbox]
+    x <- x[inbox,]
+    dat <- data.frame(y, x, datatab[inbox, c("Tmoy", "dos", "Year")])
+    fit <- glm(y ~ Tmoy + ns(dos, 4)+ ns(Year, round(nyear / 10)), 
+      data = dat, family = "quasipoisson")
+    pred <- coef(fit)[2]
+    return(exp(pred))
+})
 
 # Plot and analyze the trajectory
+chosen <- 11
 x11()
-plot_trajectory(peelres, pch = 16, col = cols[3], ylab = "Mean OM", 
-  xlim = c(0, 0.02), support = 6/n, abline.pars = list(lwd = 2, lty = 2))
-mtext("n = 6", at = 6/n, cex = 1.5, line = 0.5)
+plot_trajectory(peelres, pch = 16, col = cols[3], ylab = "Relative risk", 
+  xlim = c(0, 0.02), support = chosen/n, abline.pars = list(lwd = 2, lty = 2),
+  ytype = "rel.diff")
+mtext(sprintf("n = %i", chosen), at = chosen/n, cex = 1.5, line = 0.5)
 
 if (SAVE){
   dev.print(png, filename = sprintf("%s/FigS3_PRIM.png", result_path), 
@@ -179,34 +187,35 @@ if (SAVE){
 }
 
 # Thresholds refinement by pasting 
-primres <- pasting(peelres, support = 6/n)
+primres <- pasting(peelres, support = chosen/n)
 
 # Thresholds extraction
 results[["PRIM"]] <- sapply(extract.box(primres)$limits[[1]], "[", 1) 
 
 #----- Adaptive index models (AIM) -----
 # Cross-validation to obtain the optimal number of steps
-cvb <- cv.lm.main(datatab[,indicator.names], datatab$OM, 
-  nsteps = 3 * p, maxnumcut = 3, backfit = T, mincut = 4/n)
+cvb <- cv.lm.main(datatab[,c("Tmin", "Tmax", "dos", "Year")], datatab$Death, 
+  nsteps = 3 * 4, maxnumcut = 3, backfit = T, mincut = 10/n)
 
 # Fit the AIM with the optimal number of steps
-aimfit <- lm.main(datatab[,indicator.names], datatab$OM, nsteps = cvb$kmax,
-  maxnumcut = 3, backfit = T, mincut = 4/n)
+aimfit <- lm.main(datatab[,c("Tmin", "Tmax", "dos", "Year")], datatab$Death, 
+  nsteps = cvb$kmax, maxnumcut = 3, backfit = T, mincut = 10/n)
 
 # Extract thresholds
 rules <- aimfit$res[[cvb$kmax]]
 maxrules <- aggregate(rules[,2], by = list(var = rules[,1]), max)
 results[["AIM"]] <- rep(NA_real_, p)
-results[["AIM"]][maxrules$var] <- maxrules$x
+results[["AIM"]][maxrules$var[1:2]] <- maxrules$x[1:2]
 
 # Plot the index
-surfaim <- matrix(index.prediction(rules, surfgrid), nrow = 1000)
+surfaim <- matrix(index.prediction(rules, datpred), nrow = 1000)
+predscores <- sort(unique(c(surfaim)))
 
 x11()
 filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surfaim,
   color.palette = function(n) hcl.colors(n, "YlOrBr", rev = T), cex.axis = 1.2,
-  key.title = title(main = "Score", cex = 1.3), levels = -1:cvb$kmax + 0.5,
-  key.axes = axis(4, at = 0:cvb$kmax + 0.5, labels = 0:cvb$kmax),
+  key.title = title(main = "Score", cex = 1.3), levels = predscores,
+  key.axes = axis(4, at = predscores + 0.5, labels = seq_along(predscores)),
   plot.title = {
     title(xlab = indicator.names[1], cex.lab = 1.3)
     title(ylab = indicator.names[2], cex.lab = 1.3)
@@ -233,10 +242,11 @@ if (SAVE){
 
 
 #----- Generalized additive models (GAM) -----
-gamfit <- gam(OM ~ s(Tmin) + s(Tmax), data = datatab)
+gamfit <- gam(Death ~ s(Tmin) + s(Tmax) + s(dos) + s(Year), 
+  data = datatab, family = quasipoisson())
 
 # Extract thresholds
-results[["GAM"]] <- extractThresholds_gam(gamfit)
+results[["GAM"]] <- extractThresholds_gam(gamfit)[1:2]
 
 # Plot the fitted functions with thresholds
 x11(width = 15)
@@ -271,10 +281,16 @@ if (SAVE){
 
 # Add reference (Chebana et al. 2013)
 results[["Reference"]] <- c(20, 33)
+  
+# Compute over-mortality to define episodes
+em.form <- sprintf("%s ~ ns(dos, 4) + ns(Year, round(nyear / 10))",
+  which.Y)
+EM <- lm(as.formula(em.form), datatab)$fitted.values
+OM <- excess(datatab[,which.Y], EM) 
 
 # Extract alarms for each method
 alarms <- lapply(results, extract_alarms, x = datatab[,indicator.names], 
-  y = datatab$OM)
+  y = OM) 
 
 # Analyse basic statistics of alarms
 alarms.n <- sapply(alarms, length)
@@ -287,7 +303,7 @@ alarms.coverage <- alarms.mean * alarms.n / n
 cutPts <- seq(30, 60, 5)
 sensitivity <- falseAlarms <- specificity <- precision <- F1 <- F2 <- list()
 for (i in 1:length(cutPts)){
-  trueAlarms <- episodes(datatab$OM, cutPts[i])
+  trueAlarms <- episodes(OM, cutPts[i])
   found <- lapply(alarms, function(x) trueAlarms[trueAlarms$t %in% names(x),])
   sensitivity[[i]] <- sapply(found, function(x) nrow(x) / nrow(trueAlarms))
   falseAlarms[[i]] <- sapply(alarms, 
@@ -329,9 +345,9 @@ text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "d)",
   cex = 3, xpd = T, adj = c(-0.5,1.2))
   
 if (SAVE){
-  dev.print(png, filename = sprintf("%s/Fig4_Performance.png", result_path), 
+  dev.print(png, filename = sprintf("%s/Fig3_Performance.png", result_path), 
     units = "in", res = 100)
-  dev.copy2eps(file = sprintf("%s/Fig4_Performance.eps", result_path))
+  dev.copy2eps(file = sprintf("%s/Fig3_Performance.eps", result_path))
 }
 
 
@@ -340,47 +356,80 @@ if (SAVE){
 #            Bootstrap simulations
 #---------------------------------------------------
 B <- 1000
-
+                                                  
 # Create data blocks
-datablock <- split(datatab, datatab$Date$year)
+datablock <- split(1:n, datatab$Year)
 bpool <- 1:length(datablock)
 
 # Draw bootstrap samples
 bsamples <- replicate(B, sample(datablock, replace = T), simplify = F)
-bsamples <- lapply(bsamples, Reduce, f = "rbind")
+bsamples <- lapply(bsamples, unlist)
+
+# Initalize cluster
+cl <- makeCluster(2)
+# Transfer objects in cluster
+clusterExport(cl, ls())
+clusterEvalQ(cl, {
+  library(quantmod)
+  library(earth)
+  library(hhws)
+  library(lattice)
+  library(primr)
+  library(mgcv)
+  library(partykit)
+  library(AIM)
+})
 
 # Apply algorithms
 bootRes <- list()
-bootRes[["MOB"]] <- lapply(bsamples, function(dat) 
-  MOB.apply(dat$OM, dat[,indicator.names],  minsize = 4))
-bootRes[["MARS"]] <- lapply(bsamples, function(dat) 
-  MARS.apply(dat$OM, dat[,indicator.names], degree = p, endspan = 4))
-bootRes[["PRIM"]] <- lapply(bsamples, function(dat){ 
-  PRIM.apply(dat$OM, dat[,indicator.names], beta.stop = 4/n, peeling.side = -1)  
+bootRes[["MOB"]] <- parSapply(cl, bsamples, function(b){
+  dat <- datatab[b,]
+  MOB.apply(yb = dat$Death, xb = dat[,indicator.names], 
+    zb = cbind(dat$Tmoy, ns(dat$dos, 4), ns(dat$Year, round(nyear / 10))),
+    family = "quasipoisson", minsize = 10)
+}) 
+bootRes[["MARS"]] <- parSapply(cl, bsamples, function(b){
+  dat <- datatab[b,]
+  MARS.apply(yb = dat$Death, xb = dat[,indicator.names], 
+    zb = dat[,c("dos", "Year")], degree = p, endspan = 10, 
+    glm = list(family = "quasipoisson"))
 })
-bootRes[["AIM"]] <- lapply(bsamples, function(dat) 
-  AIM.apply(dat$OM, dat[,indicator.names], backfit = T, mincut = 4/n))
-bootRes[["GAM"]] <- lapply(bsamples, function(dat) 
-  GAM.apply(dat$OM, dat[,indicator.names]))
+bootRes[["PRIM"]] <- parSapply(cl, bsamples, function(b){
+  dat <- datatab[b,]
+  PRIM.apply(yb = dat$Death, xb = dat[,indicator.names], 
+    zb = cbind(dat$Tmoy, ns(dat$dos, 4), ns(dat$Year, round(nyear / 10))),
+    RRind = 1, beta.stop = 10/n, peeling.side = -1, family = "quasipoisson")    
+})
+bootRes[["AIM"]] <- parSapply(cl, bsamples, function(b){
+  dat <- datatab[b,]
+  AIM.apply(yb = dat$Death, xb = dat[,indicator.names], 
+    zb = dat[,c("dos", "Year")], backfit = T, mincut = 10/n)
+})
+bootRes[["GAM"]] <- parSapply(cl, bsamples, function(b){
+  dat <- datatab[b,]
+  GAM.apply(yb = dat$Death, xb = dat[,indicator.names], 
+    zb = dat[,c("dos", "Year")], family = "quasipoisson")
+})
+
+stopCluster(cl)
  
 if (SAVE){
   save(bsamples, bootRes, 
     file = sprintf("%s/Results_bootstrap.RData", result_path))
 }
+if (F) load(sprintf("%s/Results_bootstrap.RData", result_path))
 
-# Obtain thresholds
-bootThresh <- lapply(bootRes, sapply, "[[", "thresholds")
 
 #---- Plot the bootstrap results
 nm <- length(results) - 1
-ylim <- range(sapply(bootRes, sapply, "[[", "thresholds"), na.rm = TRUE)
+ylim <- range(bootRes, na.rm = TRUE)
 xlim <- c(.5, p * nm + 0.5)
 
 x11(width = 10, height = 6)
 par(yaxs = "i", cex.axis = 1.2, cex.lab = 1.3, mar = c(5, 2, 4, 1) + .1)
 layout(matrix(1:2, nrow = 1), width = c(0.7, 0.3))
 for (j in 1:p){    
-  resj <- sapply(bootThresh, "[", j, )
+  resj <- sapply(bootRes, "[", j, )
   boxplot(resj, horizontal = T, at = (1:nm) * p - j + 1, yaxt = "n",
     border = cols, varwidth = T, 
     lwd = 2, ylim = ylim, xlim = xlim, add = j > 1, pch = j, 
@@ -395,7 +444,7 @@ axis(side = 2, at = (1:nm) * p - (p - 1)/2, labels = names(bootRes),
   tick = F)
 
 # Number of unfound thresholds
-percentNA <- sapply(bootThresh, apply, 1, function(x) mean(is.na(x)))
+percentNA <- sapply(bootRes, apply, 1, function(x) mean(is.na(x)))
 bp <- barplot(percentNA[p:1,], beside = TRUE, horiz = TRUE, xlim = c(0,1),
   col = rep(cols[1:nm], each = p), space = c(0, 0.1), xaxt = "n",
   xlab = "Proportion (%)", main = "b) Failure proportion")
@@ -404,9 +453,9 @@ abline(h = bp[1, -1] - 0.55, lty = 3)
 box()
 
 if (SAVE){
-  dev.print(png, filename = sprintf("%s/Fig3_Bootstrap.png", result_path), 
+  dev.print(png, filename = sprintf("%s/Fig4_Bootstrap.png", result_path), 
     units = "in", res = 100)
-  dev.copy2eps(file = sprintf("%s/Fig3_Bootstrap.eps", result_path))
+  dev.copy2eps(file = sprintf("%s/Fig4_Bootstrap.eps", result_path))
 }
 
 

@@ -56,6 +56,9 @@ extractThresholds_party <- function(tree){
     by = list(node = predict(tree, type = "node")), 
     mean)
   nodeNum <- with(nodeMean, node[which.max(x)])
+  if (nodeNum == 1) return(list(
+    thresholds = rep(NA_real_, sum(colnames(dat) != "y")), 
+    bestnode = nodeNum))
   
   # Extract thresholds
   nodepath <- partykit:::.list.rules.party(tree, nodeNum)
