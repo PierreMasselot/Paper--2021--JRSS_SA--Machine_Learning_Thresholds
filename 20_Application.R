@@ -22,9 +22,7 @@ library(AIM)
 library(primr)
 library(colorspace)
 library(parallel)
-
-setwd("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/1 - Thresholds/Paper--Machine-Learning-Thresholds") # Repo
-         
+      
 source("0 - Misc_functions.R")
 source("0 - Threshold_functions.R")
 
@@ -45,7 +43,7 @@ cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod",
   "slategrey", "black")
 
 SAVE <- FALSE # Save the results?
-result_path <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Article V9"
+result_path <- "Figures"
 
 #---------------------------------------------------
 #                 Data Loading
@@ -239,6 +237,11 @@ if (SAVE){
     units = "in", res = 100)
   dev.copy2eps(file = sprintf("%s/FigS4_AIM.eps", result_path))
 }
+
+#----- Threshold regression -----
+#threshfit <- chngptm(formula.1 = Death ~ ns(dos, 4) + ns(Year, round(nyear / 10)),
+#  formula.2 = ~ Tmin + Tmax, data = datatab, family = "quasipoisson",
+#  type = "stegmented")
 
 
 #----- Generalized additive models (GAM) -----

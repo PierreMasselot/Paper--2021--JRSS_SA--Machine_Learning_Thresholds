@@ -13,122 +13,27 @@ library(mgcv)
 library(partykit)
 library(AIM)
 library(parallel)
+library(segmented)
+library(dlnm)
 
-setwd("C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Programmes/R/1 - Thresholds/Paper--Machine-Learning-Thresholds")
+source("00_Misc_functions.R")
+source("01_Threshold_functions.R")
 
-source("0 - Misc_functions.R")
-source("0 - Threshold_functions.R")
+source("10_Simulation_functions.R")
 
-#---------------------------------------------------
-#                 Relationship functions
-#---------------------------------------------------
+#----------------------------------
+#  Parameters
+#----------------------------------
 
-# Dose-response functions
-fconstant <- function(x, Betas) Betas
-flinear <- function(x, Betas) Betas[1] + Betas[2] * x
-fJshape <- function(x, Betas){
-  pow <- outer(x, 0:4, "^")
-  pow %*% Betas
-}
-
-# Lag-response functions
-wone <- function(l, Betas) ifelse(l == 0, 1, 0)
-wconstant <- function(l, Betas) Betas
-wdecay <- function(l, Betas) Betas[1] * exp(Betas[2] * l) 
-
-#---------------------------------------------------
-#              Data generating function
-#---------------------------------------------------
-#' Generate data for testing threshold finding methods
-#'
-#' @param B Number of simulated datasets.
-#' @param n Record length of simulated datasets.
-#' @param p Number of indicator variables.
-#' @param Lsim Maximum lag for the relationship between response and indicators.
-#' @param obetas Weights of each indicator's effect on the response.
-#' @param ffuns Dose-response functions. Recycled if necessary.
-#' @param fbetas Parameters of the dose-response functions.
-#' @param wfuns Lag-response functions. Recycled if necessary.
-#' @param wbetas Parameters or lag-response functions.
-#' @param s Thresholds to be found. Must be between 0 and 1.
-#' @param stype If "quantile" s corresponds to the quanile of X. If not, directly
-#'   directly corresponds to the threshold.
-#' @param extBetas Parameters for the linear function of extremes.
-#' @param XdepOrder AR order for temporal dependence of indicators.
-#' @param YdepOrder AR ordre for temporal dependence of response.
-#' @param noise.sd Standard deviation of the random part of response, relative
-#'    to the standard deviation of the deterministic part.
-generate.data <- function(B = 5000, n = 5000, p = 2, Lsim = 1, 
-  obetas = 1, ffuns = "fconstant", fbetas = list(), wfuns = "wone", 
-  wbetas = list(), s = .8, stype = c("quantile", "absolute"), extBetas = 1,
-  XdepOrder = 0, YdepOrder = 0, noise.sd = .2)
-{
-  params <- as.list(environment())
-  
-  # Recycling necessary parameters
-  ffuns <- rep_len(ffuns, p)
-  wfuns <- rep_len(wfuns, p)
-  s <- rep_len(s, p)
-  obetas <- rep_len(obetas, p + 1)
-  wbetas <- rep_len(wbetas, p + 1)
-  extBetas <- rep_len(extBetas, p + 1)
-  
-  # Predictors X
-  suppressWarnings(Xsim <- replicate(p, 
-    arima.sim(list(ar = XdepOrder), n, rnorm)))
-  stype <- match.arg(stype)
-  if (stype == "quantile"){
-    Xsim <- apply(Xsim, 2, function(x) rank(x) / n)
-  } else {
-    Xsim <- apply(Xsim, 2, scale)
-  }
-  
-  # Mean part
-  Ypart <- Xsim
-  fTrue <- overall <- list()
-  for (j in 1:p){
-    Xlags <- sapply(0:Lsim, Lag, x = Xsim[,j])
-    Xfun <- function(x, l){do.call(ffuns[j], list(x, fbetas[[j]])) * 
-      do.call(wfuns[j], list(l, wbetas[[j]]))
-    }
-    fTrue[[j]] <- outer(seq(0, 1, length.out = 20), 0:Lsim, Xfun)
-    overall[[j]] <- apply(fTrue[[j]], 1, sum)
-    Ypart[,j] <- apply(Xlags, 1, function(x) sum(Xfun(x, 0:Lsim)))
-  } 
-  Ypart <- apply(Ypart, 2, scale)
-  
-  linPred <- cbind(1, Ypart) %*% obetas
-  linPred <- scale(linPred)
-  
-  # Extreme part
-  uni.extremes <- mapply(">=", as.data.frame(Xsim), s)
-  extremes <- apply(uni.extremes, 1, all)
-  
-  extBetas <- extBetas
-  Xext <- mapply("-", as.data.frame(Xsim), s)
-  extPred <- ifelse(extremes, cbind(1, Xext) %*% extBetas, 0)
-
-  # Response simulation
-  suppressWarnings(Ysim <- replicate(B, scale(linPred + extPred) + 
-    arima.sim(list(ar = YdepOrder), n, rnorm, sd = noise.sd), simplify = TRUE))
-  
-  output <- list(Ysim = Ysim, Xsim = Xsim, linPred = linPred, extPred = extPred,
-    fTrue = fTrue, overall = overall, parameters = params, s = s)
-  return(output)
-}
-
-
-##############################################################################
-#
-#                            Simulations 
-
+# Saving final figures
 SAVE <- FALSE
-respath <- "C:/Users/masselpl/Documents/Recherche/2017-2019 - Post-doc/Resultats/Part 1 - thresholds/Article V8"
+respath <- "Figures"
 
 # Important constant parameters
-p <- 2
+p <- 2   # Number of variables
 s <- .95  # Quantile
-B <- 5000
+B <- 5  # Replication number
+L <- 3
 
 # Varying parameters between simulations
 varParams <- list()
@@ -137,27 +42,33 @@ varParams$extType <- list(jump = c(1, 0, 0), linear = c(0, 1, 1))
 varParams$extBetas <- list(X10 = .1, X30 = .3, X50 = .5, X100 = 1, 
                    X300 = 3, X500 = 5, X1000 = 10)
 
+# Graphical parameters
+cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod", 
+  "slategrey")
+  
+#----------------------------------
+#  Preparation of result storing objects
+#----------------------------------
 
+# Number of cases considered
 combParam <- do.call(expand.grid, varParams)
 nc <- nrow(combParam)
 nvp <- ncol(combParam)
 
-# Other useful objects
-cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod", 
-  "slategrey")
-
 # Scores of interest 
-biasRes <- vector("list", nc)
-SEres <- vector("list", nc)
-RMSEres <- vector("list", nc)
+biasRes <- SEres <- RMSEres <- vector("list", nc)
 
-# Uncertainty
-biasSE <- SESE <- RMSESE <- vector("list", nc)
+# Scores of extreme days prediction
+sensitivity <- precision <- F1 <- F2 <- vector("list", nc)
 
-#---- Paralell computing
-# Initialize cluster for parallel computation
+#----------------------------------
+#  Preparing parallel computing (socket, on windows)
+#----------------------------------
+
+# Initialize cluster 
 cl <- makeCluster(2)
-# Transfer objects in cluster
+
+# Load the necessary packages on each cluster
 clusterExport(cl, ls())
 clusterEvalQ(cl, {
   library(quantmod)
@@ -168,14 +79,18 @@ clusterEvalQ(cl, {
   library(mgcv)
   library(partykit)
   library(AIM)
+  library(segmented)
+  library(dlnm)
 })
 
-#---- Loop for simulations ---
+#----------------------------------
+#  Loop on all cases
+#----------------------------------
+
 for(i in 1:nc){  
   print(sprintf("%i / %i", i, nc)); flush.console()
   
   #---- Generate data
-  L <- 3
   XBetas <- combParam[[i, "extType"]] * combParam[[i, "extBetas"]]
   
   dataSim <- generate.data(B = B, Lsim = L, p = p, s = s,
@@ -185,24 +100,33 @@ for(i in 1:nc){
     extBetas = XBetas, XdepOrder = .6, noise.sd = .1
   )
   
-  # Transfer objects in cluster
+  #---- Transfer objects in cluster
   clusterExport(cl, "dataSim")
     
-  #---- Apply methods ----
+  #---- Apply methods 
   results <- list()
   results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, 
     xb = dataSim$Xsim, zb = dataSim$Xsim)
   results[["MARS"]] <- parApply(cl, dataSim$Ysim, 2, MARS.apply, 
-    xb = dataSim$Xsim, degree = p)
+    xb = dataSim$Xsim, degree = 2)
   results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, 
     xb = dataSim$Xsim, zb = dataSim$Xsim)
   results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, 
     xb = dataSim$Xsim, backfit = T, numcut = 1)
   results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, 
     xb = dataSim$Xsim)
+  results[["DLNM"]] <- parApply(cl, dataSim$Ysim, 2, DLNM.apply, 
+    xb = dataSim$Xsim, 
+    crosspars = replicate(p, list(lag = L + 1, 
+      argvar = list(fun = "ps", df = 10), 
+      arglag = list(fun = "strata", df = 1)), simplify = FALSE
+    )
+  )
+  results[["SEG"]] <- parApply(cl, dataSim$Ysim, 2, seg.apply, 
+    xb = dataSim$Xsim, zb = dataSim$Xsim)
   
-  #---- Result comparison ----
-  
+  #---- Result comparison
+  # True thresholds  
   sTrue <- mapply("quantile", as.data.frame(dataSim$Xsim), s)
     
   # Bias
@@ -219,18 +143,44 @@ for(i in 1:nc){
     simplify = "array")
   RMSE <- apply(sDiff, c(1,3), function(x) sqrt(sum(x^2, na.rm = T)))
   RMSEres[[i]] <- RMSE
+  
+  #---- Ability to predict extreme days
+  # True extreme days
+  trueX <- which(dataSim$extPred != 0)
+  ntrue <- length(trueX)
+  
+  # Compute scores for each simulation of each model
+  scores <- lapply(results, function(tr){
+    preddays <- mapply(extract_alarms, thresholds = as.data.frame(tr), 
+      y = as.data.frame(dataSim$Ysim), 
+      MoreArgs = list(x = dataSim$Xsim), SIMPLIFY = FALSE)
+    preddays <- lapply(preddays, function(x) as.numeric(names(x)))
+    found <- lapply(preddays, "%in%", x = trueX)
+    sens <- sapply(found, sum) / ntrue
+    prec <- sapply(found, sum) / sapply(preddays, length)
+    prec[prec == Inf] <- 0
+    F1 <- sapply(preddays, Fscore, trueX, 1)
+    F2 <- sapply(preddays, Fscore, trueX, 2) 
+    list(sensitivity = sens, precision = prec, F1 = F1, F2 = F2)
+  })
+  
+  # Store results
+  sensitivity[[i]] <- sapply(scores, "[[", "sensitivity")
+  precision[[i]] <- sapply(scores, "[[", "precision") 
+  F1[[i]] <- sapply(scores, "[[", "F1") 
+  F2[[i]] <- sapply(scores, "[[", "F2") 
 }
 
 stopCluster(cl)
 
 if (SAVE){ 
   save(combParam, biasRes, SEres, RMSEres, 
-    file = sprintf("%s/Results_simulations.RData", respath))
+    file = sprintf("%s/11_Results_simulations_bivariate.RData", respath))
 }
 
-##############################################################################
-#
-#                    Plotting the results
+#----------------------------------
+#  Plots
+#----------------------------------
 
 load(sprintf("%s/Results_simulations.RData", respath))
 

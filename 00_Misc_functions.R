@@ -82,7 +82,7 @@ extractThresholds_gam <- function(object){
   ci_lo <- exp_fun$fit - 1.96 * exp_fun$se.fit
   
   # Sort matrices according to exposure
-  xb <- object$model[,-attr(object$terms, "response")]
+  xb <- object$model[,-attr(object$terms, "response"), drop = FALSE]
   ords <- apply(xb, 2, order)
   xb_ord <- Map("[", as.data.frame(xb), as.data.frame(ords))
   fit_ord <- Map("[", as.data.frame(exp_fun$fit), as.data.frame(ords))

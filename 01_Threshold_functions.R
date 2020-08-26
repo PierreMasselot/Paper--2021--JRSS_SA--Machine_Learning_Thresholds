@@ -15,8 +15,8 @@ MOB.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
   if (!is.null(zb)) datab <- data.frame(datab, z = zb)
   datab <- na.omit(datab)
-  xinds <- grep("x\\.", colnames(datab))
-  zinds <- grep("z\\.", colnames(datab))
+  xinds <- grep("x\\.?", colnames(datab))
+  zinds <- grep("z\\.?", colnames(datab))
   
   # Grow the tree (glmtree is a wrapper for mob with GLM)
   modform <- paste(colnames(datab)[zinds], collapse = " + ")
@@ -34,26 +34,26 @@ MARS.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
   if (!is.null(zb)) datab <- data.frame(datab, z = zb)
   datab <- na.omit(datab)
-  xinds <- grep("x\\.", colnames(datab))
+  xinds <- grep("x\\.?", colnames(datab))
   
   # Apply MARS
   marsb <- earth(y ~ ., data = datab, ...)
   
   # Thresholds
-  apply(marsb$cuts[,xinds - 1], 2, max)
+  apply(marsb$cuts[,xinds - 1, drop = FALSE], 2, max)
 }
 
 
 PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb), 
   family = "gaussian", ...){
   keep <- complete.cases(yb)
-  xb <- xb[keep,]
+  xb <- xb[keep,, drop = FALSE]
   yb <- na.omit(yb)
   n <- length(yb)
   if (is.null(zb)){
     obj.fun <- mean
   } else {
-    zb <- zb[keep,]
+    zb <- zb[keep,, drop = FALSE]
     obj.fun <- function(y, x, inbox){
       y <- y[inbox]
       dat <- data.frame(y, zb[inbox,])
@@ -82,9 +82,9 @@ AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, ...){
   } else {
     xb <- data.frame(x = xb)
   }
-  xb <- xb[keep,]
+  xb <- xb[keep,, drop = FALSE]
   n <- length(yb)
-  xinds <- grep("x\\.", colnames(xb))
+  xinds <- grep("x\\.?", colnames(xb))
   p <- length(xinds)
   
   # Fit the model
@@ -98,7 +98,7 @@ AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, ...){
     }
   }
   if (inherits(cvb, "try-error")){
-    return(list(thresholds = rep(NA_real_, p), alarms = NULL))
+    return(rep(NA_real_, p))
   }
   
   aimb <- lm.main(xb, yb, nsteps = cvb$kmax,
@@ -118,7 +118,7 @@ GAM.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
   if (!is.null(zb)) datab <- cbind(datab, zb)
   datab <- na.omit(datab)
-  xinds <- grep("x\\.", colnames(datab))
+  xinds <- grep("x\\.?", colnames(datab))
   
   # Fitting the GAM
   form_rhs <- paste(sprintf("s(%s)", colnames(datab)[-1]), collapse = " + ")
@@ -128,4 +128,88 @@ GAM.apply <- function(yb, xb, zb = NULL, ...){
   extractThresholds_gam(gam_res)[xinds - 1]
 }
 
+DLNM.apply <- function(yb, xb, zb = NULL, crosspars = vector("list", ncol(xb)), gampars = list()){
+  # Prepare crossbases
+  cblist <- vector("list", ncol(xb))
+  for (i in seq_len(ncol(xb))){
+    crosspars[[i]]$x <- xb[,i]
+    cblist[[i]] <- do.call(crossbasis, crosspars[[i]])
+  }
+  names(cblist) <- sprintf("cb%i", 1:length(cblist))
+  
+  # Prepare penalties
+  bfuns <- sapply(cblist, function(x) attr(x, "argvar")$fun)
+  if (any(bfuns %in% c("ps", "cr"))){
+    penlist <- lapply(cblist, cbPen)
+    gampars$paraPen <- penlist
+  }
+  
+  # Fit model
+  datab <- c(list(y = yb), cblist)
+  form <- sprintf("y ~ %s", paste(names(cblist), collapse = " + "))
+  if (!is.null(zb)) form <- sprintf("%s + zb", form)
+  gampars$formula <- as.formula(form)
+  gampars$data <- datab
+  res <- do.call(gam, gampars)
+  
+  # Obtain overall relationship
+  gamcoefs <- res$coefficients
+  thresholds <- vector("numeric", ncol(xb))
+  for (i in seq_len(ncol(xb))){
+    inds <- grep(names(cblist)[i], names(coef(res)))
+    # First estimate of the association
+    cp <- crosspred(cblist[[i]], coef = gamcoefs[inds], vcov = vcov(res)[inds, inds, drop = F], 
+      by = .001)
+    thresholds[i] <- min(cp$predvar[cp$alllow > 0])
+    # Minimum mortality temperature
+    mmtind <- max(1, emdr:::find.extrema(cp$allfit)$indmin)
+    mmt <- cp$predvar[mmtind]
+    # Find the lowest value (above mmt) such that alllow is above 0
+    abovemmt <- cp$predvar > mmt
+    thresholds[i] <- min(cp$predvar[abovemmt & cp$alllow > 0])
+  }
+  
+  return(thresholds)
+}
 
+
+#chngpt.apply <- function(yb, xb, zb = NULL, ...){
+#  datab <- data.frame(y = yb, x = xb)
+#  if (!is.null(zb)) datab <- cbind(datab, zb)
+#  datab <- na.omit(datab)
+#  xinds <- grep("x\\.", colnames(datab))
+#  
+#  # Prepare formulas
+#  f1 <- sprintf("y ~ %s", ifelse(is.null(zb), "1", paste(colnames(zb), collapse = "+")))
+#  f2 <- sprintf("~ %s", paste(colnames(datab)[xinds], collapse = " + "))
+#  
+#  # Fit threshold regression model
+#  thresh_res <- chngptm(as.formula(f1), as.formula(f2), data = datab, 
+#    family = "gaussian", type = "stegmented")
+#}
+
+seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
+{
+  # Data
+  datab <- data.frame(y = yb, x = xb)
+  if (!is.null(zb)) datab <- data.frame(datab, z = zb)
+  datab <- na.omit(datab)
+  xinds <- grep("x\\.?", colnames(datab))
+  zinds <- grep("z\\.?", colnames(datab))
+  
+  # Basic model
+  modrhs <- ifelse(is.null(zb), "1", paste(names(datab)[zinds], collapse = " + "))
+  modform <- sprintf("y ~ %s", modrhs)
+  glmpars$formula <- as.formula(modform)
+  glmpars$data <- datab
+  mod <- do.call(glm, glmpars)
+  
+  # Segmented
+  segpars$obj <- mod
+  segform <- sprintf("~ %s", paste(names(datab)[xinds], collapse = " + "))
+  segpars$seg.Z <- as.formula(segform)
+  resb <- do.call(segmented, segpars)
+  
+  # Extract thresholds
+  return(resb$psi[,2])
+}
