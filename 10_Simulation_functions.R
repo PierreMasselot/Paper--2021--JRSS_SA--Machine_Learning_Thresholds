@@ -91,6 +91,7 @@ generate.data <- function(B = 5000, n = 5000, p = 2, Lsim = 1,
   extremes <- apply(uni.extremes, 1, all)
   
   Xext <- mapply("-", as.data.frame(Xsim), s)
+  Xext <- mapply("/", as.data.frame(Xext), apply(Xsim, 2, max) - s)
   extPred <- ifelse(extremes, cbind(1, Xext) %*% extBetas, 0)
 
   # Response simulation

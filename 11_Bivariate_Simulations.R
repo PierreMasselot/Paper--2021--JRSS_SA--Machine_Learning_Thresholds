@@ -15,6 +15,8 @@ library(AIM)
 library(parallel)
 library(segmented)
 library(dlnm)
+library(emdr)
+library(fda)
 
 source("00_Misc_functions.R")
 source("01_Threshold_functions.R")
@@ -27,13 +29,13 @@ source("10_Simulation_functions.R")
 
 # Saving final figures
 SAVE <- FALSE
-respath <- "Figures"
 
 # Important constant parameters
 p <- 2   # Number of variables
 s <- .95  # Quantile
 B <- 5  # Replication number
 L <- 3
+n <- 5000 # Sample size
 
 # Varying parameters between simulations
 varParams <- list()
@@ -41,10 +43,6 @@ varParams <- list()
 varParams$extType <- list(jump = c(1, 0, 0), linear = c(0, 1, 1))
 varParams$extBetas <- list(X10 = .1, X30 = .3, X50 = .5, X100 = 1, 
                    X300 = 3, X500 = 5, X1000 = 10)
-
-# Graphical parameters
-cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod", 
-  "slategrey")
   
 #----------------------------------
 #  Preparation of result storing objects
@@ -93,7 +91,7 @@ for(i in 1:nc){
   #---- Generate data
   XBetas <- combParam[[i, "extType"]] * combParam[[i, "extBetas"]]
   
-  dataSim <- generate.data(B = B, Lsim = L, p = p, s = s,
+  dataSim <- generate.data(n = n, B = B, Lsim = L, p = p, s = s,
     obetas = c(0, 1, 1), ffuns = "flinear", fbetas = list(c(0,1), c(0,1)), 
     wfuns = c("wconstant", "wdecay"), 
     wbetas = list(1 / (L + 1), c(1, -5 / (L + 1))),
@@ -106,24 +104,18 @@ for(i in 1:nc){
   #---- Apply methods 
   results <- list()
   results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, minsize = 10)
   results[["MARS"]] <- parApply(cl, dataSim$Ysim, 2, MARS.apply, 
-    xb = dataSim$Xsim, degree = 2)
+    xb = dataSim$Xsim, degree = 2, endspan = 10)
   results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, beta.stop = 10/n)
   results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, 
-    xb = dataSim$Xsim, backfit = T, numcut = 1)
+    xb = dataSim$Xsim, backfit = T, numcut = 1, mincut = 10/n)
   results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, 
     xb = dataSim$Xsim)
-  results[["DLNM"]] <- parApply(cl, dataSim$Ysim, 2, DLNM.apply, 
-    xb = dataSim$Xsim, 
-    crosspars = replicate(p, list(lag = L + 1, 
-      argvar = list(fun = "ps", df = 10), 
-      arglag = list(fun = "strata", df = 1)), simplify = FALSE
-    )
-  )
   results[["SEG"]] <- parApply(cl, dataSim$Ysim, 2, seg.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, 
+    segpars = list(control = seg.control(alpha = 10 / n)))
   
   #---- Result comparison
   # True thresholds  
@@ -141,7 +133,7 @@ for(i in 1:nc){
   # Mean Square Error
   sDiff <- sapply(results, "-", matrix(sTrue, nrow = p, ncol = B), 
     simplify = "array")
-  RMSE <- apply(sDiff, c(1,3), function(x) sqrt(sum(x^2, na.rm = T)))
+  RMSE <- apply(sDiff, c(1,3), function(x) sqrt(mean(x^2, na.rm = T)))
   RMSEres[[i]] <- RMSE
   
   #---- Ability to predict extreme days
@@ -168,21 +160,26 @@ for(i in 1:nc){
   sensitivity[[i]] <- sapply(scores, "[[", "sensitivity")
   precision[[i]] <- sapply(scores, "[[", "precision") 
   F1[[i]] <- sapply(scores, "[[", "F1") 
-  F2[[i]] <- sapply(scores, "[[", "F2") 
+  F2[[i]] <- sapply(scores, "[[", "F2")
+  
+  # Saving all results
+  if (SAVE) save(dataSim, results, 
+    file = sprintf("Results/11_AllRes_SimBiv_%i", i)) 
 }
 
 stopCluster(cl)
 
 if (SAVE){ 
-  save(combParam, biasRes, SEres, RMSEres, 
-    file = sprintf("%s/11_Results_simulations_bivariate.RData", respath))
+  save(combParam, biasRes, SEres, RMSEres,
+    sensitivity, precision, F1, F2, 
+    file = "Results/11_Results_simulations_bivariate.RData")
 }
 
 #----------------------------------
 #  Plots
 #----------------------------------
 
-load(sprintf("%s/Results_simulations.RData", respath))
+load("Results/11_Results_simulations_bivariate.RData")
 
 # Parameters
 varnames <- c("extType", "extBetas")
@@ -191,7 +188,7 @@ varlabs <- c("fs", expression(beta))
 # Prepare data generating parameters
 combs <- as.data.frame(lapply(combParam, names))
 combs <- within(combs, {
-  extType <- factor(as.integer(extType), levels = c(1, 2), 
+  extType <- factor(extType, levels = c("jump", "linear"), 
     labels = c("Jump", "Break"))
   extBetas <- as.integer(substring(extBetas, 2)) / 100
 })
@@ -199,11 +196,19 @@ combs <- within(combs, {
 # Number of models
 nm <- ncol(RMSEres[[1]])
 
+# Graphical parameters
+cols <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod", 
+  "slategrey", 5, 6)
+#cols <- c(colorRampPalette(c("cornflowerblue", "royalblue4"))(4),
+#  colorRampPalette(c("coral", "firebrick"))(3))
+pchs <- rep_len(15:18, nm)
+ltys <- rep_len(1:4, nm)
+
 #----------------------------------------------------------------
 #                         Mean plot
 #----------------------------------------------------------------
   
-ylim <- range(unlist(RMSEres))
+ylim <- range(unlist(RMSEres) + .001)
   
 x11(width = 15)
 layout(rbind(matrix(1:4, nrow = 2, byrow = T), 5), height = c(0.45, 0.45, 0.1))
@@ -248,6 +253,129 @@ if (SAVE){
   dev.copy2eps(file = sprintf("%s/Fig2_SimulationResults.eps", respath))
 }
 
+#----------------------------------------------------------------
+#                         Sensitivity plot
+#----------------------------------------------------------------
+
+mediansens <- sapply(sensitivity, apply, 2, median, na.rm = T) 
+quantlowsens <- sapply(sensitivity, apply, 2, quantile, .25, na.rm = T) 
+quanthighsens <- sapply(sensitivity, apply, 2, quantile, .75, na.rm = T)
+
+nt <- length(xsim)
+  
+x11(width = 15)
+layout(rbind(1:2, 3), height = c(0.45, 0.1))
+par(cex.lab = 1.5, cex.main = 2, cex.axis = 1.3)
+for (k in seq(nlevels(combs[,"extType"]))){
+  plot(c(mediansens[,as.numeric(combs$extType) == k]), xaxt = "n", 
+    col = cols, pch = pchs, ylim = c(min(quantlowsens),max(quanthighsens)), 
+    cex = 1.5, ylab = ifelse(k == 1, "sens score", ""), xlab = varlabs[2],
+    main = paste0(letters[k], ") ", levels(combs[,"extType"])[k])
+  )
+  abline(v = (1:(nt - 1)) * nm + .5, lty = 2, col = grey(.5))
+  arrows(x0 = 1:(nt * nm), y0 = c(quantlowsens[,as.numeric(combs$extType) == k]),
+    y1 = c(quanthighsens[,as.numeric(combs$extType) == k]), angle = 90, 
+    col = cols, lwd = 2, length = .05, code = 3, lty = ltys)
+  axis.intervals(1, ticks = (0:nt) * nm + .5, labels = xsim, cex.axis = 1.2)
+}
+# Legend in a new panel
+par(mar = rep(0,4))
+plot.new()
+legend("bottom", colnames(RMSEres[[1]]), col = cols, pch = pchs, 
+  lty = ltys, ncol = nm, cex = 1.5)
+
+#----------------------------------------------------------------
+#                         Precision plot
+#----------------------------------------------------------------
+
+medianprec <- sapply(precision, apply, 2, median, na.rm = T) 
+quantlowprec <- sapply(precision, apply, 2, quantile, .25, na.rm = T) 
+quanthighprec <- sapply(precision, apply, 2, quantile, .75, na.rm = T)
+
+nt <- length(xsim)
+  
+x11(width = 15)
+layout(rbind(1:2, 3), height = c(0.45, 0.1))
+par(cex.lab = 1.5, cex.main = 2, cex.axis = 1.3)
+for (k in seq(nlevels(combs[,"extType"]))){
+  plot(c(medianprec[,as.numeric(combs$extType) == k]), xaxt = "n", 
+    col = cols, pch = pchs, ylim = c(min(quantlowprec),max(quanthighprec)), 
+    cex = 1.5, ylab = ifelse(k == 1, "prec score", ""), xlab = varlabs[2],
+    main = paste0(letters[k], ") ", levels(combs[,"extType"])[k])
+  )
+  abline(v = (1:(nt - 1)) * nm + .5, lty = 2, col = grey(.5))
+  arrows(x0 = 1:(nt * nm), y0 = c(quantlowprec[,as.numeric(combs$extType) == k]),
+    y1 = c(quanthighprec[,as.numeric(combs$extType) == k]), angle = 90, 
+    col = cols, lwd = 2, length = .05, code = 3, lty = ltys)
+  axis.intervals(1, ticks = (0:nt) * nm + .5, labels = xsim, cex.axis = 1.2)
+}
+# Legend in a new panel
+par(mar = rep(0,4))
+plot.new()
+legend("bottom", colnames(RMSEres[[1]]), col = cols, pch = pchs, 
+  lty = ltys, ncol = nm, cex = 1.5)
+
+#----------------------------------------------------------------
+#                         F1 plot
+#----------------------------------------------------------------
+
+medianF1 <- sapply(F1, apply, 2, median, na.rm = T) 
+quantlowF1 <- sapply(F1, apply, 2, quantile, .25, na.rm = T) 
+quanthighF1 <- sapply(F1, apply, 2, quantile, .75, na.rm = T)
+
+nt <- length(xsim)
+  
+x11(width = 15)
+layout(rbind(1:2, 3), height = c(0.45, 0.1))
+par(cex.lab = 1.5, cex.main = 2, cex.axis = 1.3)
+for (k in seq(nlevels(combs[,"extType"]))){
+  plot(c(medianF1[,as.numeric(combs$extType) == k]), xaxt = "n", 
+    col = cols, pch = pchs, ylim = c(min(quantlowF1),max(quanthighF1)), 
+    cex = 1.5, ylab = ifelse(k == 1, "F1 score", ""), xlab = varlabs[2],
+    main = paste0(letters[k], ") ", levels(combs[,"extType"])[k])
+  )
+  abline(v = (1:(nt - 1)) * nm + .5, lty = 2, col = grey(.5))
+  arrows(x0 = 1:(nt * nm), y0 = c(quantlowF1[,as.numeric(combs$extType) == k]),
+    y1 = c(quanthighF1[,as.numeric(combs$extType) == k]), angle = 90, 
+    col = cols, lwd = 2, length = .05, code = 3, lty = ltys)
+  axis.intervals(1, ticks = (0:nt) * nm + .5, labels = xsim, cex.axis = 1.2)
+}
+# Legend in a new panel
+par(mar = rep(0,4))
+plot.new()
+legend("bottom", colnames(RMSEres[[1]]), col = cols, pch = pchs, 
+  lty = ltys, ncol = nm, cex = 1.5)
+
+#----------------------------------------------------------------
+#                         F2 plot
+#----------------------------------------------------------------
+
+medianF2 <- sapply(F2, apply, 2, median, na.rm = T) 
+quantlowF2 <- sapply(F2, apply, 2, quantile, .25, na.rm = T) 
+quanthighF2 <- sapply(F2, apply, 2, quantile, .75, na.rm = T)
+
+nt <- length(xsim)
+  
+x11(width = 15)
+layout(rbind(1:2, 3), height = c(0.45, 0.1))
+par(cex.lab = 1.5, cex.main = 2, cex.axis = 1.3)
+for (k in seq(nlevels(combs[,"extType"]))){
+  plot(c(medianF2[,as.numeric(combs$extType) == k]), xaxt = "n", 
+    col = cols, pch = pchs, ylim = c(min(quantlowF2),max(quanthighF2)), 
+    cex = 1.5, ylab = ifelse(k == 1, "F1 score", ""), xlab = varlabs[2],
+    main = paste0(letters[k], ") ", levels(combs[,"extType"])[k])
+  )
+  abline(v = (1:(nt - 1)) * nm + .5, lty = 2, col = grey(.5))
+  arrows(x0 = 1:(nt * nm), y0 = c(quantlowF2[,as.numeric(combs$extType) == k]),
+    y1 = c(quanthighF2[,as.numeric(combs$extType) == k]), angle = 90, 
+    col = cols, lwd = 2, length = .05, code = 3, lty = ltys)
+  axis.intervals(1, ticks = (0:nt) * nm + .5, labels = xsim, cex.axis = 1.2)
+}
+# Legend in a new panel
+par(mar = rep(0,4))
+plot.new()
+legend("bottom", colnames(RMSEres[[1]]), col = cols, pch = pchs, 
+  lty = ltys, ncol = nm, cex = 1.5)
 
 #----------------------------------------------------------------
 #       Illustration of the simulation designs

@@ -156,7 +156,7 @@ DLNM.apply <- function(yb, xb, zb = NULL, crosspars = vector("list", ncol(xb)), 
   gamcoefs <- res$coefficients
   thresholds <- vector("numeric", ncol(xb))
   for (i in seq_len(ncol(xb))){
-    inds <- grep(names(cblist)[i], names(coef(res)))
+    inds <- grep(paste0(names(cblist)[i], "v"), names(coef(res)))
     # First estimate of the association
     cp <- crosspred(cblist[[i]], coef = gamcoefs[inds], vcov = vcov(res)[inds, inds, drop = F], 
       by = .001)
@@ -208,8 +208,12 @@ seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
   segpars$obj <- mod
   segform <- sprintf("~ %s", paste(names(datab)[xinds], collapse = " + "))
   segpars$seg.Z <- as.formula(segform)
-  resb <- do.call(segmented, segpars)
+  resb <- try(do.call(segmented, segpars))
   
   # Extract thresholds
-  return(resb$psi[,2])
+  if (inherits(resb, "try-error")){
+    return(rep(NA_real_, length(xinds)))
+  } else {
+    return(resb$psi[,2])
+  }  
 }

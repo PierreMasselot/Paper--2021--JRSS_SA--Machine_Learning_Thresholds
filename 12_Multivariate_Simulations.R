@@ -32,8 +32,9 @@ respath <- "Figures"
 # Important constant parameters
 n <- 5000 # Sample size
 ne <- 15  # Number of extreme Y values generated
-B <- 5  # Replication number
+B <- 5000  # Replication number
 L <- 3
+n <- 5000 # Sample size
 
 # Varying parameters between simulations
 varParams <- list()
@@ -112,24 +113,18 @@ for(i in 1:nc){
   #---- Apply methods 
   results <- list()
   results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, minsize = 10)
   results[["MARS"]] <- parApply(cl, dataSim$Ysim, 2, MARS.apply, 
-    xb = dataSim$Xsim, degree = 2)
+    xb = dataSim$Xsim, degree = 2, endspan = 10)
   results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, beta.stop = 10/n)
   results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, 
-    xb = dataSim$Xsim, backfit = T, numcut = 1)
+    xb = dataSim$Xsim, backfit = T, numcut = 1, mincut = 10/n)
   results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, 
     xb = dataSim$Xsim)
-  results[["DLNM"]] <- parApply(cl, dataSim$Ysim, 2, DLNM.apply, 
-    xb = dataSim$Xsim, 
-    crosspars = replicate(ip, list(lag = L + 1, 
-      argvar = list(fun = "ps", df = 10), 
-      arglag = list(fun = "strata", df = 1)), simplify = FALSE
-    )
-  )
   results[["SEG"]] <- parApply(cl, dataSim$Ysim, 2, seg.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim)
+    xb = dataSim$Xsim, zb = dataSim$Xsim, 
+    segpars = list(control = seg.control(alpha = 10 / n)))
   
   #---- Error of threshold estimation
   # True thresholds  
@@ -175,13 +170,18 @@ for(i in 1:nc){
   sensitivity[[i]] <- sapply(scores, "[[", "sensitivity")
   precision[[i]] <- sapply(scores, "[[", "precision") 
   F1[[i]] <- sapply(scores, "[[", "F1") 
-  F2[[i]] <- sapply(scores, "[[", "F2") 
+  F2[[i]] <- sapply(scores, "[[", "F2")
+  
+  # Saving all results
+  if (SAVE) save(dataSim, results, 
+    file = sprintf("Results/11_AllRes_SimMultiv_%i", i)) 
 }
 
 stopCluster(cl)
 
 if (SAVE){ 
-  save(combParam, biasRes, SEres, RMSEres, 
+  save(combParam, biasRes, SEres, RMSEres,
+    sensitivity, precision, F1, F2, 
     file = sprintf("%s/11_Results_simulations_bivariate.RData", respath))
 }
 
