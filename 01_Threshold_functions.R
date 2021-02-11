@@ -13,10 +13,12 @@
 MOB.apply <- function(yb, xb, zb = NULL, ...){
   # Data and formula
   datab <- data.frame(y = yb, x = xb)
-  if (!is.null(zb)) datab <- data.frame(datab, z = zb)
+  xinds <- 1:ncol(xb) + 1
+  if (!is.null(zb)) {
+    datab <- data.frame(datab, z = zb)
+    zinds <- 1:ncol(zb) + ncol(xb) + 1
+  }
   datab <- na.omit(datab)
-  xinds <- grep("x\\.?", colnames(datab))
-  zinds <- grep("z\\.?", colnames(datab))
   
   # Grow the tree (glmtree is a wrapper for mob with GLM)
   modform <- paste(colnames(datab)[zinds], collapse = " + ")
@@ -26,21 +28,36 @@ MOB.apply <- function(yb, xb, zb = NULL, ...){
   treeb <- glmtree(as.formula(form), data = datab, ...)
   
   # Extract thresholds
-  extractThresholds_party(treeb)$thresholds
+  thresholds <- extractThresholds_party(treeb)
+  
+  # Extract alerts
+  alerts <- which(predict(treeb, type = "node") == thresholds$bestnode)
+  
+  list(thresholds = thresholds$thresholds, alerts = alerts)
 }
 
 
 MARS.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
-  if (!is.null(zb)) datab <- data.frame(datab, z = zb)
+  xinds <- 1:ncol(xb) + 1
+  if (!is.null(zb)) {
+    datab <- data.frame(datab, z = zb)
+  }
   datab <- na.omit(datab)
-  xinds <- grep("x\\.?", colnames(datab))
   
   # Apply MARS
   marsb <- earth(y ~ ., data = datab, ...)
   
   # Thresholds
-  apply(marsb$cuts[,xinds - 1, drop = FALSE], 2, max)
+  thresholds <- apply(marsb$cuts[,xinds - 1, drop = FALSE], 2, max)
+  
+  # Alerts
+  isfac <- sapply(as.data.frame(xb), is.factor)
+  xb[isfac] <- lapply(xb[isfac], as.numeric)
+  above <- mapply(">=", xb, thresholds)
+  alerts <- which(apply(above, 1, all))
+  
+  list(thresholds = thresholds, alerts = alerts)
 }
 
 
@@ -57,8 +74,18 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
     obj.fun <- function(y, x, inbox){
       y <- y[inbox]
       dat <- data.frame(y, zb[inbox,])
+      isfac <- sapply(dat, is.factor)
+      rr <- RRind
+      if (any(isfac)){
+        nlevs <- sapply(dat[isfac], function(x) nlevels(droplevels(x)))
+        remvar <- which(isfac)[nlevs == 1]
+        if (length(remvar > 0)){
+          dat <- dat[-remvar]
+          rr <- rr[!rr %in% (remvar - 1)]
+        }
+      }
       fit <- glm(y ~ ., data = dat, family = family)
-      pred <- coef(fit)[RRind + 1]
+      pred <- rowSums(predict(fit, type = "terms")[,rr])
       return(mean(pred))
     }
   }
@@ -70,7 +97,18 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
   chosenb <- jump.prim(peelb)  
   boxb <- pasting(peelb, support = chosenb$final.box$support)
   
-  sapply(extract.box(boxb)$limits[[1]], "[", 1)    
+  # Extract thresholds
+  thresholds <- lapply(extract.box(boxb)$limits[[1]], "[", 1) 
+  # If categorical, keeps ctaegories with high obj function
+  isfac <- sapply(as.data.frame(xb), is.factor)
+  if (any(isfac)){
+    thresholds[isfac] <- extract.box(boxb)$limits[[1]][isfac]
+  }
+  
+  # Extract predicted extremes
+  extremes <- predict(boxb)
+  
+  list(thresholds = thresholds, alerts = which(extremes$inbox))
 }
 
 
@@ -211,9 +249,11 @@ seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
   resb <- try(do.call(segmented, segpars))
   
   # Extract thresholds
-  if (inherits(resb, "try-error")){
+  if (inherits(resb, "try-error")){    
     return(rep(NA_real_, length(xinds)))
   } else {
-    return(resb$psi[,2])
+    psires <- resb$psi[,2]
+    names(psires) <- NULL
+    return(psires)
   }  
 }

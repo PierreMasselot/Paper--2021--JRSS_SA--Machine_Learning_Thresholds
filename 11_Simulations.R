@@ -9,6 +9,7 @@ library(earth)
 library(hhws)
 library(lattice)
 library(primr)
+# devtools::load_all("C:/Users/PierreMasselot/Documents/Recherche/# R packages/primr")
 library(mgcv)
 library(partykit)
 library(AIM)
@@ -27,22 +28,21 @@ source("10_Simulation_functions.R")
 #  Parameters
 #----------------------------------
 
-# Saving final figures
-SAVE <- FALSE
-
 # Important constant parameters
-p <- 2   # Number of variables
-s <- .95  # Quantile
-B <- 5  # Replication number
-L <- 3
-n <- 5000 # Sample size
+pext <- .015 # Probability of extreme
+B <- 1000  # Replication number
+n <- 1000 # Sample size
+
+# Variable specific parameters
+ncat <- c(NA, NA, 5)
 
 # Varying parameters between simulations
 varParams <- list()
-#  varParams$Lsim <- 0:5; names(varParams$Lsim) <- sprintf("L%s", Lsim)
-varParams$extType <- list(jump = c(1, 0, 0), linear = c(0, 1, 1))
+varParams$extType <- list(Break = c(0, 1), Jump = c(1, 1, 0), 
+  All = c(1, 1, 0, 1))
 varParams$extBetas <- list(X10 = .1, X30 = .3, X50 = .5, X100 = 1, 
-                   X300 = 3, X500 = 5, X1000 = 10)
+  X300 = 3, X500 = 5, X1000 = 10)
+
   
 #----------------------------------
 #  Preparation of result storing objects
@@ -53,10 +53,7 @@ combParam <- do.call(expand.grid, varParams)
 nc <- nrow(combParam)
 nvp <- ncol(combParam)
 
-# Scores of interest 
-biasRes <- SEres <- RMSEres <- vector("list", nc)
-
-# Scores of extreme days prediction
+# Scores of interest
 sensitivity <- precision <- F1 <- F2 <- vector("list", nc)
 
 #----------------------------------
@@ -90,12 +87,15 @@ for(i in 1:nc){
   
   #---- Generate data
   XBetas <- combParam[[i, "extType"]] * combParam[[i, "extBetas"]]
+  pi <- length(combParam[[i, "extType"]]) - 1
+  # Compute thresholds
+  s <- 1 - pext ^ (1 / pi)
   
-  dataSim <- generate.data(n = n, B = B, Lsim = L, p = p, s = s,
-    obetas = c(0, 1, 1), ffuns = "flinear", fbetas = list(c(0,1), c(0,1)), 
-    wfuns = c("wconstant", "wdecay"), 
-    wbetas = list(1 / (L + 1), c(1, -5 / (L + 1))),
-    extBetas = XBetas, XdepOrder = .6, noise.sd = .1
+  dataSim <- replicate(B, 
+    generate.data(n = n, p = pi, s = s, ncat = ncat[1:pi],
+      obetas = 1, ffuns = "flinear", fbetas = list(c(0,1)), 
+      extBetas = XBetas, noise.sd = .1, rho = .5
+    ), simplify = F
   )
   
   #---- Transfer objects in cluster
@@ -103,14 +103,18 @@ for(i in 1:nc){
     
   #---- Apply methods 
   results <- list()
-  results[["MOB"]] <- parApply(cl, dataSim$Ysim, 2, MOB.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim, minsize = 10)
-  results[["MARS"]] <- parApply(cl, dataSim$Ysim, 2, MARS.apply, 
-    xb = dataSim$Xsim, degree = 2, endspan = 10)
-  results[["PRIM"]] <- parApply(cl, dataSim$Ysim, 2, PRIM.apply, 
-    xb = dataSim$Xsim, zb = dataSim$Xsim, beta.stop = 10/n)
+  results[["MOB"]] <- parLapply(cl, dataSim, function(x){
+    MOB.apply(yb = x$Ysim, xb = x$Xsim, zb = x$Xsim, minsize = 5)
+  })
+  results[["MARS"]] <- parLapply(cl, dataSim, function(x){
+    MARS.apply(yb = x$Ysim, xb = x$Xsim, degree = pi, endspan = 5)
+  })
+  results[["PRIM"]] <- parLapply(cl, dataSim, function(x){
+    PRIM.apply(yb = x$Ysim, xb = x$Xsim, zb = x$Xsim, beta.stop = 5/n,
+      peeling.side = -1) 
+  })
   results[["AIM"]] <- parApply(cl, dataSim$Ysim, 2, AIM.apply, 
-    xb = dataSim$Xsim, backfit = T, numcut = 1, mincut = 10/n)
+    xb = dataSim$Xsim, backfit = T, numcut = 1, mincut = 5/n)
   results[["GAM"]] <- parApply(cl, dataSim$Ysim, 2, GAM.apply, 
     xb = dataSim$Xsim)
   results[["SEG"]] <- parApply(cl, dataSim$Ysim, 2, seg.apply, 

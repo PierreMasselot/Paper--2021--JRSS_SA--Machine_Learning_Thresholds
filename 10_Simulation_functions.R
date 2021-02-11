@@ -17,11 +17,6 @@ fJshape <- function(x, Betas){
   pow %*% Betas
 }
 
-# Lag-response functions
-wone <- function(l, Betas) ifelse(l == 0, 1, 0)
-wconstant <- function(l, Betas) Betas
-wdecay <- function(l, Betas) Betas[1] * exp(Betas[2] * l) 
-
 #---------------------------------------------------
 #              Data generating function
 #---------------------------------------------------
@@ -37,68 +32,80 @@ wdecay <- function(l, Betas) Betas[1] * exp(Betas[2] * l)
 #' @param wfuns Lag-response functions. Recycled if necessary.
 #' @param wbetas Parameters or lag-response functions.
 #' @param s Thresholds to be found. 
-#' @param stype If "quantile" s corresponds to the quanile of X. If not, directly
+#' @param stype If "quantile" s corresponds to the quantile of X. If not, 
 #'   directly corresponds to the threshold.
 #' @param extBetas Parameters for the linear function of extremes.
 #' @param XdepOrder AR order for temporal dependence of indicators.
 #' @param YdepOrder AR ordre for temporal dependence of response.
 #' @param noise.sd Standard deviation of the random part of response, relative
 #'    to the standard deviation of the deterministic part.
-generate.data <- function(B = 5000, n = 5000, p = 2, Lsim = 1, 
-  obetas = 1, ffuns = "fconstant", fbetas = list(), wfuns = "wone", 
-  wbetas = list(), s = .8, stype = c("quantile", "absolute"), extBetas = 1,
-  XdepOrder = 0, YdepOrder = 0, noise.sd = .2)
+generate.data <- function(n = 5000, p = 2, ncat = NA, 
+  obetas = 1, ffuns = "fconstant", fbetas = list(), 
+  s = .8, stype = c("quantile", "absolute"), extBetas = 1,
+  YdepOrder = 0, rho = 0, noise.sd = .2)
 {
-  params <- as.list(environment())
-  
   # Recycling necessary parameters
+  ncat <- rep_len(ncat, p)
+  fact <- !is.na(ncat)
   ffuns <- rep_len(ffuns, p)
-  wfuns <- rep_len(wfuns, p)
+  fbetas <- rep_len(fbetas, p)
   s <- rep_len(s, p)
   obetas <- rep_len(obetas, p + 1)
-  wbetas <- rep_len(wbetas, p + 1)
   extBetas <- rep_len(extBetas, p + 1)
   
   # Predictors X
-  suppressWarnings(Xsim <- replicate(p, 
-    arima.sim(list(ar = XdepOrder), n, rnorm)))
+  Smat <- matrix(rho, nrow = p, ncol = p)
+  diag(Smat) <- 1
+  Xsim <- MASS::mvrnorm(n, rep(0, p), Smat)
+  Xsim <- as.data.frame(Xsim)
+  if (any(fact)){
+    Xsim[fact] <- Map(function(x, nc, s){
+        quants <- quantile(x, c(seq(0, s, length.out = nc), 1))
+        quants[1] <- quants[1] - 1
+        quants[nc + 1] <- quants[nc + 1] + 1
+        cut(x, quants, labels = 1:nc)
+      }, 
+      Xsim[fact], ncat[fact], s[fact]
+    )
+  }
+  
+  # To apply s
   stype <- match.arg(stype)
   if (stype == "quantile"){
-    Xsim <- apply(Xsim, 2, function(x) rank(x) / n)
+    Xsim[!fact] <- lapply(Xsim[!fact], function(x) rank(x) / n)
   } else {
-    Xsim <- apply(Xsim, 2, scale)
+    Xsim[!fact] <- lapply(Xsim[!fact], scale)
   }
   
   # Mean part
-  Ypart <- Xsim
-  fTrue <- overall <- list()
-  for (j in 1:p){
-    Xlags <- sapply(0:Lsim, Lag, x = Xsim[,j])
-    Xfun <- function(x, l){do.call(ffuns[j], list(x, fbetas[[j]])) * 
-      do.call(wfuns[j], list(l, wbetas[[j]]))
-    }
-    fTrue[[j]] <- outer(seq(0, 1, length.out = 20), 0:Lsim, Xfun)
-    overall[[j]] <- apply(fTrue[[j]], 1, sum)
-    Ypart[,j] <- apply(Xlags, 1, function(x) sum(Xfun(x, 0:Lsim)))
-  } 
-  Ypart <- apply(Ypart, 2, scale)
-  
-  linPred <- cbind(1, Ypart) %*% obetas
+  Ypart <- Map(function(f, b, x) do.call(f, list(x = as.numeric(x), Betas = b)), 
+    ffuns, fbetas, Xsim)
+  linPred <- cbind(1, scale(data.matrix(as.data.frame(Ypart)))) %*% obetas
   linPred <- scale(linPred)
   
-  # Extreme part
-  uni.extremes <- mapply(">=", as.data.frame(Xsim), s)
+  # Detect extremes
+  uni.extremes <- matrix(NA, nrow = n, ncol = p)
+  uni.extremes[,!fact] <- mapply(">=", Xsim[!fact], s[!fact])
+  if (any(fact)) uni.extremes[,fact] <- mapply("==", Xsim[fact], 
+    sapply(Xsim[fact], function(x) max(as.numeric(x))))
   extremes <- apply(uni.extremes, 1, all)
   
-  Xext <- mapply("-", as.data.frame(Xsim), s)
-  Xext <- mapply("/", as.data.frame(Xext), apply(Xsim, 2, max) - s)
+  # Apply extreme function
+  Xext <- matrix(NA, nrow = n, ncol = p)
+  Xext[,!fact] <- mapply("-", Xsim[!fact], s[!fact])
+  Xext[,!fact] <- mapply("/", as.data.frame(Xext)[,!fact, drop = F], 
+    sapply(Xsim[!fact], max) - s[!fact])
+  if (any(fact)){
+    Xext[,fact] <- sapply(Xsim[fact], 
+      function(x) as.numeric(x == max(as.numeric(x))))
+  }
   extPred <- ifelse(extremes, cbind(1, Xext) %*% extBetas, 0)
 
   # Response simulation
-  suppressWarnings(Ysim <- replicate(B, scale(linPred + extPred) + 
-    arima.sim(list(ar = YdepOrder), n, rnorm, sd = noise.sd), simplify = TRUE))
+  suppressWarnings(Ysim <- scale(linPred + extPred) + 
+    arima.sim(list(ar = YdepOrder), n, rnorm, sd = noise.sd))
   
-  output <- list(Ysim = Ysim, Xsim = Xsim, linPred = linPred, extPred = extPred,
-    fTrue = fTrue, overall = overall, parameters = params, s = s)
+  output <- list(Ysim = Ysim, Xsim = Xsim, linPred = linPred, 
+    extPred = extPred, extremes = extremes)
   return(output)
 }
