@@ -37,32 +37,54 @@ MOB.apply <- function(yb, xb, zb = NULL, ...){
 }
 
 
-MARS.apply <- function(yb, xb, zb = NULL, ...){
+MARS.apply <- function(yb, xb, zb = NULL, endspan, ...){
   datab <- data.frame(y = yb, x = xb)
-  xinds <- 1:ncol(xb) + 1
+  xinds <- 1:ncol(xb)
   if (!is.null(zb)) {
     datab <- data.frame(datab, z = zb)
   }
   datab <- na.omit(datab)
   
   # Apply MARS
-  marsb <- earth(y ~ ., data = datab, ...)
+  marsb <- earth(y ~ ., data = datab, endspan = endspan, ...)
   
   # Thresholds
-  thresholds <- apply(marsb$cuts[,xinds - 1, drop = FALSE], 2, max)
+  cutsbyvar <- lapply(as.data.frame(marsb$cuts[,xinds, drop = FALSE]), 
+    function(x) sort(unique(x[x != 0])))
+  nocut <- sapply(cutsbyvar, length) == 0
+  if (any(nocut)){
+    cutsbyvar[nocut] <- lapply(datab[xinds[nocut] + 1], min)
+  }
+  
+  # try different threshold combination
+  allthreshs <- expand.grid(cutsbyvar)
+  nalerts <- apply(allthreshs, 1, 
+    function(x) sum(apply(mapply(">=", as.data.frame(xb), x), 1, all))
+  )
+  meanalerts <- apply(allthreshs, 1, 
+    function(x) mean(yb[apply(mapply(">=", as.data.frame(xb), x), 1, all)])
+  )
+  
+  # Take the threshold with highest response among those with at least endspan
+  #   observations
+  ind <- which(rank(meanalerts) == max(rank(meanalerts)[nalerts >= endspan]))
+  ind <- ind[length(ind)]
+  if (length(ind) == 0) ind <- which.max(nalerts)
+  thresholds <- allthreshs[ind,]
   
   # Alerts
-  isfac <- sapply(as.data.frame(xb), is.factor)
-  xb[isfac] <- lapply(xb[isfac], as.numeric)
-  above <- mapply(">=", xb, thresholds)
+  above <- mapply(">=", as.data.frame(xb), thresholds)
   alerts <- which(apply(above, 1, all))
   
-  list(thresholds = thresholds, alerts = alerts)
+  thresholds[nocut] <- NA
+  
+  list(thresholds = unlist(thresholds), alerts = alerts)
 }
 
 
 PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb), 
-  family = "gaussian", ...){
+  family = "gaussian", ...)
+{
   keep <- complete.cases(yb)
   xb <- xb[keep,, drop = FALSE]
   yb <- na.omit(yb)
@@ -74,18 +96,8 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
     obj.fun <- function(y, x, inbox){
       y <- y[inbox]
       dat <- data.frame(y, zb[inbox,])
-      isfac <- sapply(dat, is.factor)
-      rr <- RRind
-      if (any(isfac)){
-        nlevs <- sapply(dat[isfac], function(x) nlevels(droplevels(x)))
-        remvar <- which(isfac)[nlevs == 1]
-        if (length(remvar > 0)){
-          dat <- dat[-remvar]
-          rr <- rr[!rr %in% (remvar - 1)]
-        }
-      }
       fit <- glm(y ~ ., data = dat, family = family)
-      pred <- rowSums(predict(fit, type = "terms")[,rr])
+      pred <- coef(fit)[RRind + 1]
       return(mean(pred))
     }
   }
@@ -98,12 +110,7 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
   boxb <- pasting(peelb, support = chosenb$final.box$support)
   
   # Extract thresholds
-  thresholds <- lapply(extract.box(boxb)$limits[[1]], "[", 1) 
-  # If categorical, keeps ctaegories with high obj function
-  isfac <- sapply(as.data.frame(xb), is.factor)
-  if (any(isfac)){
-    thresholds[isfac] <- extract.box(boxb)$limits[[1]][isfac]
-  }
+  thresholds <- sapply(extract.box(boxb)$limits[[1]], "[", 1) 
   
   # Extract predicted extremes
   extremes <- predict(boxb)
@@ -112,9 +119,10 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
 }
 
 
-AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, ...){  
+AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, mincut, ...){  
   keep <- complete.cases(yb)
   yb <- na.omit(yb)
+  xinds <- 1:ncol(as.matrix(xb))
   if (!is.null(zb)){
     xb <- data.frame(x = xb, zb)
   } else {
@@ -122,13 +130,14 @@ AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, ...){
   }
   xb <- xb[keep,, drop = FALSE]
   n <- length(yb)
-  xinds <- grep("x\\.?", colnames(xb))
   p <- length(xinds)
+  # To avoid error in lm.main
+  if (p == 1) xb <- cbind(xb, 1)
   
   # Fit the model
   while (numcut > 0){
     cvb <- try(cv.lm.main(xb, yb, nsteps = numcut * p, 
-      maxnumcut = numcut, ...), silent = TRUE)
+      maxnumcut = numcut, mincut = mincut, ...), silent = TRUE)
     if (inherits(cvb, "try-error")){
       numcut <- numcut - 1
     } else {
@@ -136,34 +145,69 @@ AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, ...){
     }
   }
   if (inherits(cvb, "try-error")){
-    return(rep(NA_real_, p))
+    return(list(thresholds = rep(NA_real_, p),
+      alerts = seq_along(yb)))
   }
   
   aimb <- lm.main(xb, yb, nsteps = cvb$kmax,
-    maxnumcut = numcut, ...)
+    maxnumcut = numcut, mincut = mincut, ...)
   
   # Extract thresholds
   rules <- aimb$res[[cvb$kmax]]
-  maxrules <- aggregate(rules[,2], by = list(var = rules[,1]), max)
-  thresholds <- rep(NA_real_, p)
-  thresholds[xinds %in% maxrules$var] <- maxrules$x[maxrules$var %in% xinds]
+  rules <- rbind(rules, cbind(xinds, apply(xb[,xinds, drop = F], 2, min), 1))
   
-  return(thresholds)
+  # Thresholds
+  rulesbyvar <- split(rules[,2], rules[,1])[xinds]
+  rulesbyvar <- lapply(rulesbyvar, sort)
+  
+  # try different threshold combination
+  allthreshs <- expand.grid(rulesbyvar)
+  nalerts <- apply(allthreshs, 1, 
+    function(x) sum(apply(mapply(">=", as.data.frame(xb)[,xinds, drop = F], x), 
+      1, all))
+  )
+  meanalerts <- apply(allthreshs, 1, 
+    function(x) mean(yb[apply(mapply(">=", as.data.frame(xb)[,xinds, drop = F], 
+      x), 1, all)])
+  )
+  
+  # Take the threshold with highest response among those with at least endspan
+  #   observations
+  ind <- which(rank(meanalerts) == max(rank(meanalerts)[nalerts >= mincut]))
+  ind <- ind[length(ind)]
+  if (length(ind) == 0) ind <- which.max(nalerts)
+  thresholds <- allthreshs[ind,]
+  
+  # Alerts
+  above <- mapply(">=", as.data.frame(xb[,xinds, drop = F]), thresholds)
+  alerts <- which(apply(above, 1, all))
+  
+  # Remove threshold
+  thresholds[thresholds == apply(xb[,xinds, drop = F], 2, min)] <- NA
+  
+  list(thresholds = unlist(thresholds), alerts = alerts)
 }
 
 
 GAM.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
+  xinds <- 2:ncol(datab)
   if (!is.null(zb)) datab <- cbind(datab, zb)
   datab <- na.omit(datab)
-  xinds <- grep("x\\.?", colnames(datab))
   
   # Fitting the GAM
   form_rhs <- paste(sprintf("s(%s)", colnames(datab)[-1]), collapse = " + ")
   gam_form <- sprintf("y ~ %s", form_rhs)
   gam_res <- gam(as.formula(gam_form), data = datab, ...)
   
-  extractThresholds_gam(gam_res)[xinds - 1]
+  # extract thresholds
+  thresholds <- extractThresholds_gam(gam_res)[xinds - 1]
+  
+  # Alerts
+  above <- mapply(">=", as.data.frame(xb), thresholds)
+  alerts <- which(apply(above, 1, all))
+  
+  list(thresholds = thresholds, alerts = alerts)
 }
 
 DLNM.apply <- function(yb, xb, zb = NULL, crosspars = vector("list", ncol(xb)), gampars = list()){
@@ -230,10 +274,15 @@ seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
 {
   # Data
   datab <- data.frame(y = yb, x = xb)
-  if (!is.null(zb)) datab <- data.frame(datab, z = zb)
+  xinds <- 2:ncol(datab)
+  names(datab)[-1] <- sprintf("X%i", xinds - 1)
+  if (!is.null(zb)) {
+    datab <- data.frame(datab, z = zb)
+    zinds <- 1:ncol(zb) + max(xinds)
+    names(datab)[zinds] <- sprintf("Z%i", 1:ncol(zb))
+  }
   datab <- na.omit(datab)
-  xinds <- grep("x\\.?", colnames(datab))
-  zinds <- grep("z\\.?", colnames(datab))
+  
   
   # Basic model
   modrhs <- ifelse(is.null(zb), "1", paste(names(datab)[zinds], collapse = " + "))
@@ -243,17 +292,33 @@ seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
   mod <- do.call(glm, glmpars)
   
   # Segmented
+  if (!is.null(segpars$npsi)){
+    segpars$npsi <- rep(segpars$npsi, length(xinds))
+    names(segpars$npsi) <- names(datab)[xinds]
+  } 
+  if (!is.null(segpars$psi)){
+    segpars$psi <- rep_len(segpars$psi, length(xinds))
+    names(segpars$psi) <- names(datab)[xinds]
+  } 
   segpars$obj <- mod
   segform <- sprintf("~ %s", paste(names(datab)[xinds], collapse = " + "))
   segpars$seg.Z <- as.formula(segform)
   resb <- try(do.call(segmented, segpars))
   
   # Extract thresholds
-  if (inherits(resb, "try-error")){    
-    return(rep(NA_real_, length(xinds)))
+  if (inherits(resb, "try-error") || is.null(resb$psi)){    
+    return(list(thresholds = rep(NA_real_, length(xinds)), 
+      alerts = seq_along(yb)))
   } else {
-    psires <- resb$psi[,2]
+    # Extract thresholds
+    psivars <- sapply(strsplit(rownames(resb$psi), "\\."), "[", 2) 
+    psires <- tapply(resb$psi[,2], psivars, max)
     names(psires) <- NULL
-    return(psires)
+    
+    # Alerts
+    above <- mapply(">=", as.data.frame(xb), psires)
+    alerts <- which(apply(above, 1, all))
+    
+    return(list(thresholds = psires, alerts = alerts))
   }  
 }
