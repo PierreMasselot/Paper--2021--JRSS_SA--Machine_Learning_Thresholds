@@ -55,7 +55,7 @@ for (i in seq_along(varParams$extType)){
     
     # Plot results
     plot(atx, if1, pch = pchs, col = pal, cex = 1.5, 
-      xlab = ifelse(j == nr, "Percent increase", ""), ylab = expression(F[1]), 
+      xlab = ifelse(j == nr, "Percent increase", ""), ylab = "F-score", 
       main = bquote(rho ~ "=" ~ .(varParams$rho[j])),
       ylim = c(0, 1), xaxt = "n")
     segments(x0 = atx, y0 = ilow, y1 = ihigh, lwd = 2, col = pal)
@@ -77,9 +77,9 @@ plot.new()
 legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
-dev.print(png, filename = "Results/Fig1_Simu_F1.png", 
+dev.print(png, filename = "Results/Fig1_Simu_F.png", 
   units = "in", res = 100)
-dev.copy2eps(file = "Results/Fig1_Simu_F1.eps")
+dev.copy2eps(file = "Results/Fig1_Simu_F.eps")
 
 #----------------------------------------------------------------
 #                         Sensitivity
@@ -106,7 +106,7 @@ for (i in seq_along(varParams$extType)){
     
     # Plot results
     plot(atx, isens, pch = pchs, col = pal, cex = 1.5, 
-      xlab = ifelse(j == nr, "Percent increase", ""), ylab = expression(F[1]), 
+      xlab = ifelse(j == nr, "Percent increase", ""), ylab = "Sensitivity", 
       main = bquote(rho ~ "=" ~ .(varParams$rho[j])),
       ylim = c(0, 1), xaxt = "n")
     segments(x0 = atx, y0 = ilow, y1 = ihigh, lwd = 2, col = pal)
@@ -132,7 +132,7 @@ dev.print(png, filename = "Results/FigSup1_Simu_sens.png",
   units = "in", res = 100)
 
 #----------------------------------------------------------------
-#                         Sensitivity
+#                         Precision
 #----------------------------------------------------------------
 
 # Compute summary statistics of the criterion
@@ -156,7 +156,7 @@ for (i in seq_along(varParams$extType)){
     
     # Plot results
     plot(atx, iprec, pch = pchs, col = pal, cex = 1.5, 
-      xlab = ifelse(j == nr, "Percent increase", ""), ylab = expression(F[1]), 
+      xlab = ifelse(j == nr, "Percent increase", ""), ylab = "Precision", 
       main = bquote(rho ~ "=" ~ .(varParams$rho[j])),
       ylim = c(0, 1), xaxt = "n")
     segments(x0 = atx, y0 = ilow, y1 = ihigh, lwd = 2, col = pal)
