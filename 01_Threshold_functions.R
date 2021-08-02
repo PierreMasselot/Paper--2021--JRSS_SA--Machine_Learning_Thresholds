@@ -5,10 +5,19 @@
 ####################################################
 
 # Wrapper functions for the threshold estimation methods. All functions
-#   contain the same parameters:
-# yb    The response vector
-# xb    The indicator matrix
-# ...   Parameters to be passed to the main method (e.g. lmtree, earth, ...)
+#   apply the method and extract the thresholds from it.
+
+# Common Parameters
+#   yb    The response vector
+#   xb    The indicator matrix
+#   zb    Other non-indicator covariates to be included in the analysis
+#   ...   Parameters to be passed to the main method (e.g. lmtree, earth, ...)
+#   May also include few parameters specific to the method
+
+
+#---------------------------
+# Model-based partitioning
+#---------------------------
 
 MOB.apply <- function(yb, xb, zb = NULL, ...){
   # Data and formula
@@ -36,6 +45,9 @@ MOB.apply <- function(yb, xb, zb = NULL, ...){
   list(thresholds = thresholds$thresholds, alerts = alerts)
 }
 
+#---------------------------
+# Multivariate adaptive regression splines
+#---------------------------
 
 MARS.apply <- function(yb, xb, zb = NULL, endspan, ...){
   datab <- data.frame(y = yb, x = xb)
@@ -81,6 +93,9 @@ MARS.apply <- function(yb, xb, zb = NULL, endspan, ...){
   list(thresholds = unlist(thresholds), alerts = alerts)
 }
 
+#---------------------------
+# Patient rule-induction method
+#---------------------------
 
 PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb), 
   family = "gaussian", ...)
@@ -118,6 +133,9 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
   list(thresholds = thresholds, alerts = which(extremes$inbox))
 }
 
+#---------------------------
+# Adaptive index models
+#---------------------------
 
 AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, mincut, ...){  
   keep <- complete.cases(yb)
@@ -188,6 +206,9 @@ AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, mincut, ...){
   list(thresholds = unlist(thresholds), alerts = alerts)
 }
 
+#---------------------------
+# Generalized additive models
+#---------------------------
 
 GAM.apply <- function(yb, xb, zb = NULL, ...){
   datab <- data.frame(y = yb, x = xb)
@@ -210,65 +231,10 @@ GAM.apply <- function(yb, xb, zb = NULL, ...){
   list(thresholds = thresholds, alerts = alerts)
 }
 
-DLNM.apply <- function(yb, xb, zb = NULL, crosspars = vector("list", ncol(xb)), gampars = list()){
-  # Prepare crossbases
-  cblist <- vector("list", ncol(xb))
-  for (i in seq_len(ncol(xb))){
-    crosspars[[i]]$x <- xb[,i]
-    cblist[[i]] <- do.call(crossbasis, crosspars[[i]])
-  }
-  names(cblist) <- sprintf("cb%i", 1:length(cblist))
-  
-  # Prepare penalties
-  bfuns <- sapply(cblist, function(x) attr(x, "argvar")$fun)
-  if (any(bfuns %in% c("ps", "cr"))){
-    penlist <- lapply(cblist, cbPen)
-    gampars$paraPen <- penlist
-  }
-  
-  # Fit model
-  datab <- c(list(y = yb), cblist)
-  form <- sprintf("y ~ %s", paste(names(cblist), collapse = " + "))
-  if (!is.null(zb)) form <- sprintf("%s + zb", form)
-  gampars$formula <- as.formula(form)
-  gampars$data <- datab
-  res <- do.call(gam, gampars)
-  
-  # Obtain overall relationship
-  gamcoefs <- res$coefficients
-  thresholds <- vector("numeric", ncol(xb))
-  for (i in seq_len(ncol(xb))){
-    inds <- grep(paste0(names(cblist)[i], "v"), names(coef(res)))
-    # First estimate of the association
-    cp <- crosspred(cblist[[i]], coef = gamcoefs[inds], vcov = vcov(res)[inds, inds, drop = F], 
-      by = .001)
-    thresholds[i] <- min(cp$predvar[cp$alllow > 0])
-    # Minimum mortality temperature
-    mmtind <- max(1, emdr:::find.extrema(cp$allfit)$indmin)
-    mmt <- cp$predvar[mmtind]
-    # Find the lowest value (above mmt) such that alllow is above 0
-    abovemmt <- cp$predvar > mmt
-    thresholds[i] <- min(cp$predvar[abovemmt & cp$alllow > 0])
-  }
-  
-  return(thresholds)
-}
 
-
-#chngpt.apply <- function(yb, xb, zb = NULL, ...){
-#  datab <- data.frame(y = yb, x = xb)
-#  if (!is.null(zb)) datab <- cbind(datab, zb)
-#  datab <- na.omit(datab)
-#  xinds <- grep("x\\.", colnames(datab))
-#  
-#  # Prepare formulas
-#  f1 <- sprintf("y ~ %s", ifelse(is.null(zb), "1", paste(colnames(zb), collapse = "+")))
-#  f2 <- sprintf("~ %s", paste(colnames(datab)[xinds], collapse = " + "))
-#  
-#  # Fit threshold regression model
-#  thresh_res <- chngptm(as.formula(f1), as.formula(f2), data = datab, 
-#    family = "gaussian", type = "stegmented")
-#}
+#---------------------------
+# Segmented regression
+#---------------------------
 
 seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
 {
@@ -285,7 +251,8 @@ seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
   
   
   # Basic model
-  modrhs <- ifelse(is.null(zb), "1", paste(names(datab)[zinds], collapse = " + "))
+  modrhs <- ifelse(is.null(zb), "1", paste(names(datab)[zinds], 
+    collapse = " + "))
   modform <- sprintf("y ~ %s", modrhs)
   glmpars$formula <- as.formula(modform)
   glmpars$data <- datab

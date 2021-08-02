@@ -8,20 +8,20 @@
 #
 #                    Journal
 #
-#              Plots
+#                    Plots
 #
 #########################################################
 
-load("Results/21_BootRes.RData")
+load("Results/21_BootRes.RData") # Must run 21_Bootstarp.R first
 
 #-----------------------------
-# Thresholds
+# Figure 6: Bootstrapped thresholds
 #-----------------------------
 
-# Extract all thresholds
+# Extract all thresholds from bootstrap replications
 boot_thresh <- sapply(bootRes, sapply, "[[", "thresholds", simplify = "array")
 
-# Object for plot
+# Objects for plot
 nm <- length(bootRes)
 ylim <- range(boot_thresh, na.rm = TRUE)
 xlim <- c(.5, p * nm + 0.5)
@@ -31,7 +31,7 @@ x11(width = 10, height = 6)
 par(yaxs = "i", cex.axis = 1.2, cex.lab = 1.3, mar = c(5, 2, 4, 1) + .1)
 layout(matrix(1:2, nrow = 1), width = c(0.7, 0.3))
 
-# Threhsolds
+# Add boxplots of thresholds
 for (j in 1:p){    
   resj <- boot_thresh[j,,]
   boxplot(resj, horizontal = T, at = (1:nm) * p - j + 1, yaxt = "n",
@@ -59,11 +59,12 @@ box()
 # Save
 dev.print(png, filename = "Results/Fig6_Boot_thresh.png", 
   units = "in", res = 100)
-dev.copy2eps(file = "Results/Fig6_Boot_thresh.eps")
 
 #-----------------------------
-# Detection of over-mortality events
+# Figure 7: Bootstrapped scores
 #-----------------------------
+
+#----- Scores extraction
 
 # Computation of scores for each method
 boot_sensitivity <- boot_precision <- boot_F1 <- boot_F2 <- 
@@ -92,9 +93,7 @@ for (i in 1:length(cutPts)){
   boot_F2[[i]] <- sapply(scores, "[[", "F2")
 }
 
-
-
-#---- Plot results ----
+#----- Plot results
 
 # Params
 quant <- c(0.025, 0.975)
@@ -106,14 +105,17 @@ atx <- 1:(nm * nx) + rep(1:nx, each = nm)
 atticks <- tapply(atx, rep(1:nx, each = nm), max)[-nx] + 1
 atlabels <- tapply(atx, rep(1:nx, each = nm), mean)
 
+# Create plot layout
 x11(height = 10)
 layout(matrix(1:4, ncol = 1), height = c(rep(4, 3), 1))
 par(mar = c(5, 5, 4, 2) + .1, cex.main = 2)
 
-#--- Sensitivity
+#----- Sensitivity
+
 # Compute confidence intervals
 sens_low <- sapply(boot_sensitivity, apply, 2, quantile, quant[1], na.rm = T)
-sens_high <- sapply(boot_sensitivity, apply, 2, quantile, quant[2], na.rm = T) 
+sens_high <- sapply(boot_sensitivity, apply, 2, quantile, quant[2], na.rm = T)
+
 # Plot
 plot(atx, sapply(sensitivity, "[", 1:4), pch = pchs, col = cols[1:4], cex = 1.5, 
   xlab = "", ylab = "Sensitivity", ylim = range(c(sens_low, sens_high)), 
@@ -124,13 +126,13 @@ axis(1, at = atticks, labels = F)
 axis(1, at = atlabels, labels = cutPts, lwd = 0)
 segments(x0 = c(0, atticks), x1 = c(atticks, max(atx) + 1), 
   y0 = sapply(sensitivity, "[", 5), lend = 3, lwd = 2)
-# text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "a) Sensitivity", 
-#   cex = 3, xpd = T, adj = c(-0.5,1.2))
 
-#--- Precision
+#----- Precision
+
 # Compute confidence intervals
 prec_low <- sapply(boot_precision, apply, 2, quantile, quant[1], na.rm = T)
 prec_high <- sapply(boot_precision, apply, 2, quantile, quant[2], na.rm = T) 
+
 # Plot
 plot(atx, sapply(precision, "[", 1:4), pch = pchs, col = cols[1:4], cex = 1.5, 
   xlab = "", ylab = "Precision", ylim = range(c(prec_low, prec_high)), 
@@ -141,13 +143,13 @@ axis(1, at = atticks, labels = F)
 axis(1, at = atlabels, labels = cutPts, lwd = 0)
 segments(x0 = c(0, atticks), x1 = c(atticks, max(atx) + 1), 
   y0 = sapply(precision, "[", 5), lend = 3, lwd = 2)
-# text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "b) Precision", 
-#   cex = 3, xpd = T, adj = c(-0.5,1.2))
 
-#--- F1
+#----- F1-score
+
 # Compute confidence intervals
 F1_low <- sapply(boot_F1, apply, 2, quantile, quant[1], na.rm = T)
 F1_high <- sapply(boot_F1, apply, 2, quantile, quant[2], na.rm = T) 
+
 # Plot
 plot(atx, sapply(F1, "[", 1:4), pch = pchs, col = cols[1:4], cex = 1.5, 
   xlab = "", ylab = "F1 score", ylim = range(c(F1_low, F1_high)), 
@@ -158,26 +160,6 @@ axis(1, at = atticks, labels = F)
 axis(1, at = atlabels, labels = cutPts, lwd = 0)
 segments(x0 = c(0, atticks), x1 = c(atticks, max(atx) + 1), 
   y0 = sapply(F1, "[", 5), lend = 3, lwd = 2)
-# text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "c) F1", 
-#   cex = 3, xpd = T, adj = c(-0.5,1.2))
-
-#--- F2
-# Compute confidence intervals
-# F2_low <- sapply(boot_F2, apply, 2, quantile, quant[1], na.rm = T)
-# F2_high <- sapply(boot_F2, apply, 2, quantile, quant[2], na.rm = T) 
-# # Plot
-# plot(atx, sapply(F2, "[", 1:4), pch = pchs, col = cols[1:4], cex = 1.5, 
-#   xlab = "", ylab = "Sensitivity", ylim = range(c(F2_low, F2_high)), 
-#   xaxt = "n", main = "d) F2")
-# segments(x0 = atx, y0 = F2_low, y1 = F2_high, lwd = 2, col = cols[1:4])
-# abline(v = atticks, lty = 2)
-# axis(1, at = atticks, labels = F)
-# axis(1, at = atlabels, labels = cutPts, lwd = 0)
-# title(xlab = "Cut point")
-# segments(x0 = c(0, atticks), x1 = c(atticks, max(atx) + 1), 
-#   y0 = sapply(F2, "[", 5), lend = 3, lwd = 2)
-# text(line2user(par("mar")[2], 2), line2user(par("mar")[3], 3), "d) F2", 
-#   cex = 3, xpd = T, adj = c(-0.5,1.2))
 
 #--- Add legend
 par(mar = rep(0, 4))
@@ -191,7 +173,7 @@ dev.copy2eps(file = "Results/Fig7_Boot_scores.eps")
 
 
 #-----------------------------
-# Table 2
+# Elements of Table 2
 #-----------------------------
 
 # Thresholds

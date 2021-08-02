@@ -4,46 +4,56 @@
 #                                                  
 #########################################################
 
-library(earth)
-library(primr)
-# devtools::load_all("C:/Users/PierreMasselot/Documents/Recherche/# R packages/primr")
-library(mgcv)
-library(partykit)
-library(AIM)
-library(parallel)
-library(segmented)
+#----- Packages
+library(earth) # MARS
+library(primr) # PRIM (custom package, must be installed from github 
+                # devtools::install_github("PierreMasselot/primr"))
+library(mgcv) # GAM
+library(partykit) # MOB
+library(AIM) # AIM
+library(parallel) # For parallelisation
+library(segmented) # Segmented regression
 
+#----- Load other functions
+# Miscellaneous functions
 source("00_Misc_functions.R")
+# Wrappers to extract thresholds through the proposed methods
 source("01_Threshold_functions.R")
-
+# Functions simulating data
 source("10_Simulation_functions.R")
 
 #----------------------------------
 #  Parameters
 #----------------------------------
 
-# Important constant parameters
+#----- Important constant parameters
 pext <- .015 # Probability of extreme
 B <- 1000  # Replication number
 n <- 1000 # Sample size
 
-# Varying parameters between simulations
+#----- Varying parameters between simulations
 varParams <- list()
+
+# Type of extreme effect
 varParams$extType <- list(One = c(0, 1), Two = c(0, 1, 1), 
   Three = c(0, 1, 1, 1), Four = c(0, 1, 1, 1, 1))
+
+# Magnitude of extremes
 varParams$extBetas <- list(X10 = .1, X20 = .2, X30 = .3, X50 = .5, X100 = 1)
+
+# Correlation between variables
 varParams$rho <- c(0, .5)
   
 #----------------------------------
 #  Preparation of result storing objects
 #----------------------------------
 
-# Number of cases considered
+# Number of scenarios
 combParam <- do.call(expand.grid, varParams)
 nc <- nrow(combParam)
 nvp <- ncol(combParam)
 
-# Scores of interest
+# Objects storing scores of interest
 sensitivity <- precision <- F1 <- F2 <- vector("list", nc)
 
 #----------------------------------
@@ -58,7 +68,6 @@ clusterExport(cl, ls())
 clusterEvalQ(cl, {
   library(earth)
   library(primr)
-  # devtools::load_all("C:/Users/PierreMasselot/Documents/Recherche/# R packages/primr")
   library(mgcv)
   library(partykit)
   library(AIM)
@@ -76,7 +85,8 @@ for(i in 1:nc){
   #---- Generate data
   XBetas <- combParam[[i, "extType"]] * combParam[[i, "extBetas"]]
   pi <- length(combParam[[i, "extType"]]) - 1
-  # Compute theoretical thresholds according to number of and corr between vars
+  # Compute thresholds according to number of and corr between vars
+  #     Avoids curse-of-dimensionality issues
   Smat <- matrix(combParam[[i, "rho"]], nrow = pi, ncol = pi)
   diag(Smat) <- 1
   s <- qmvnorm(pext, tail = "upper.tail", mean = rep(0, pi), 
@@ -123,7 +133,7 @@ for(i in 1:nc){
   })
 
   #---- Ability to predict extreme days
-  # True extreme days
+  # True extreme days from simulated data
   trueX <- lapply(dataSim, function(x) which(x$extremes))
   ntrue <- sapply(trueX, length)
 
@@ -148,6 +158,5 @@ for(i in 1:nc){
 
 stopCluster(cl)
 
-save(sensitivity, precision, F1, F2, 
-  file = "Results/11_Results_simulations.RData")
+save.image(file = "Results/11_Results_simulations.RData")
 

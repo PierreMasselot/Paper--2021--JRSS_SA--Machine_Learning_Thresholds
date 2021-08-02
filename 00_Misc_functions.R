@@ -1,13 +1,17 @@
+#-------------------------------
 # Computes the F-score using observed and predicted indices of the event.
-#
+#-------------------------------
+
 # The F-score is based on recall which is identical to sensivity,
 #  i.e. the proportion of events predicted, and sensitivity which is the 
 #  proportion of predicted events that are true events. 
-#
-# predicted   Vector of index of predicted events.
-# observed    Vector of index of observed events.
-# beta        Beta value of the F-score. If larger than 1, more importance
-#  is given to recall while if lower, more importance is given to precision.
+
+# Parameters
+#   predicted   Vector of index of predicted events.
+#   observed    Vector of index of observed events.
+#   beta        Beta value of the F-score. If larger than 1, more importance
+#               is given to recall while if lower, more importance is given 
+#               to precision.
 Fscore <- function(predicted, observed, beta = 1)
 {
   nObs <- length(observed)
@@ -19,12 +23,15 @@ Fscore <- function(predicted, observed, beta = 1)
   return(Fscore)
 }
 
+#-------------------------------
 # Find local extrema and zero-crossings of a data series
-#
+#-------------------------------
+
 # Return a list giving the indices of local minima, 
 #   local maxima and the total number of extrema.
-#
-# x   The signal.
+
+# Parameters
+#   x   The signal.
 find.extrema <- function(x){
     n <- length(x)
     # when consecutive points have the same value, keep only one (the one on the middle)
@@ -43,9 +50,15 @@ find.extrema <- function(x){
     return(list(indmin = indmin, indmax = indmax, nextrema = nextr))
 }
 
-# Extracts the thresholds from a party object (see partykit)
-#
-# tree    A party object as returned by functions lmtree or ctree
+#-------------------------------
+# Extracts the thresholds from a party object
+#-------------------------------
+
+# Returns a list with thresholds corresponding to the splits yielding the 
+#   leave with highest risk estimate
+
+# Parameters
+#   tree    A party object as returned by functions lmtree or ctree
 extractThresholds_party <- function(tree){
   dat <- tree$data
   yind <- attr(tree$terms, "response")
@@ -73,27 +86,15 @@ extractThresholds_party <- function(tree){
   return(list(thresholds = thresholds, bestnode = nodeNum))
 }
 
-find.extrema <- function(x){
-  n <- length(x)
-  # when consecutive points have the same value, keep only one (the one on the middle)
-  adoub <- which(diff(x) != 0)
-  inddoub <- which(diff(adoub) != 1) + 1
-  d <- adoub[inddoub] - adoub[inddoub-1]
-  adoub[inddoub] <- adoub[inddoub] - floor(d/2)
-  adoub <- c(adoub,n)
-  x1 <- x[adoub]
-  # Search the extrema among the remaining points
-  d2x <- diff(sign(diff(x1)))
-  indmin <- adoub[which(d2x > 0) + 1] 
-  indmax <- adoub[which(d2x < 0) + 1]
-  nextr <- c(length(indmin),length(indmax))
-  names(nextr) <- c("nmin","nmax")
-  return(list(indmin=indmin,indmax=indmax,nextrema=nextr))
-}
+#-------------------------------
+# Extracts the thresholds from a gam object
+#-------------------------------
 
-# Extracts the thresholds from a gam object (see mgcv)
-#
-# object    A gam object as returned by the function gam
+# Extracts threshold from a gam object as lowest values above MMT such that
+#   the lower confidence interval is > 0
+
+# Parameters
+#   object    A gam object as returned by the function gam
 extractThresholds_gam <- function(object){
   # Compute lower 95% confidence bound
   exp_fun <- predict(object, type = "terms", se.fit = TRUE)
@@ -124,12 +125,17 @@ extractThresholds_gam <- function(object){
   return(thresholds)
 }
 
+#-------------------------------
 # Detects the alarms from the data using the given thresholds
-#
-# thresholds    A vector of thresholds. Must be consistent with the number
-#   of columns in x
-# x   The indicators
-# y   The response
+#-------------------------------
+
+# Extract values of y such that x > thresholds
+
+# Parameters
+#   thresholds    A vector of thresholds. Must be consistent with the number
+#                 of columns in x
+#   x   The indicators
+#   y   The response
 extract_alarms <- function(thresholds, x, y){  
   x <- data.frame(x)
   uni.alb <- mapply(">=", x, thresholds)
@@ -139,10 +145,13 @@ extract_alarms <- function(thresholds, x, y){
   return(alarms)
 }
 
+#-------------------------------
 # Transforms the line coordinate in user coordinates in a plot margins
-#
-# line    Line coordinates
-# side    The margin side
+#-------------------------------
+
+# Parameters
+#   line    Line coordinates
+#   side    The margin side
 line2user <- function(line, side) {
   lh <- par('cin')[2] * par('cex') * par('lheight')
   x_off <- diff(grconvertX(0:1, 'inches', 'user'))
@@ -155,44 +164,25 @@ line2user <- function(line, side) {
     stop("side must be 1, 2, 3, or 4", call.=FALSE))
 }
 
-# Add a legend in the margins of a plot
-#
-# location   A character string giving the location of the legend. One of:
-#     "topcenter", "topleft", "topright", "rightcenter", "righttop", 
-#     "rightbottom", "leftcenter", "lefttop", "leftbottom", "bottomcenter", 
-#     "bottomleft", "bottomright"
-# ...    The usual parameters of the function legend
-outerLegend <- function(location,...)
-{
-  if (length(dev.list())==0) stop("Aucun graphique ouvert") 
-  olparams <- switch(tolower(location),
-    topcenter = list(originalLocation = "top", direction = c(0,1)),
-    topright = list(originalLocation = "topright", direction = c(0,1)),
-    topleft = list(originalLocation = "topleft", direction = c(0,1)),
-    rightcenter = list(originalLocation = "right", direction = c(1,0)),
-    righttop = list(originalLocation = "topright", direction = c(1,0)),
-    rightbottom = list(originalLocation = "bottomright", direction = c(1,0)),
-    leftcenter = list(originalLocation = "left", direction = c(1,0)),
-    lefttop = list(originalLocation = "topleft", direction = c(1,0)),
-    leftbottom = list(originalLocation = "bottomleft", direction = c(1,0)),
-    bottomcenter = list(originalLocation = "bottom", direction = c(0,1)),
-    bottomright = list(originalLocation = "bottomright", direction = c(0,1)),
-    bottomleft = list(originalLocation = "bottomleft", direction = c(0,1)),
-    stop("Unknown 'location' parameter")
-  )
-  leg <- legend(olparams$originalLocation,plot=F,...) 
-  insetx <- leg$rect$w/(par("usr")[2]-par("usr")[1])
-  insety <- leg$rect$h/(par("usr")[4]-par("usr")[3])
-  insetpar <- -c(insetx,insety) * olparams$direction
-  legend(olparams$originalLocation,xpd=NA,inset=insetpar,...)
-}
+#-------------------------------
+# Creates axis for intervals
+#-------------------------------
 
-axis.intervals <- function(side=1, ticks = axTicks(side), atLabels = NULL, labels = 1:length(atLabels), ...)
-# side : integer between 1 and 4, the side at which to draw the interval.  The axis is placed as follows: 1=below, 2=left, 3=above and 4=right ;
-# ticks : position of the ticks delimiting the intervals. If a single number is provided, this indicates the number of intervals; if a vector is provided, this indicates the position of each ticks ; 
-# atLabels : the position of the labels for each interval. If not of length nIntervals - 1, the vector is either recycled, either cut. The default is to the center of the interval ;
-# labels : the labels of each interval ; 
-# ... : other graphical parameters to pass to the 'axis' function
+# Draws an axis with labels between ticks to represent what eahc interval
+#   represents. Especially useful for time intervals
+
+# Parameters
+#   side    Side on which to plot axis. Same as axis function.
+#   ticks   position of the ticks delimiting the intervals. 
+#           If a single number is provided, this indicates the number of 
+#           intervals; if a vector is provided, this indicates the position of 
+#           each tick. 
+#   atLabels  the position of the labels for each interval.  
+#             The default is to the center of the interval ;
+#   labels    the labels of each interval. Same as axis function 
+#   ...     other graphical parameters to pass to the 'axis' function
+axis.intervals <- function(side = 1, ticks = axTicks(side), atLabels = NULL, 
+  labels = 1:length(atLabels), ...)
 {
     stopifnot((side <- as.integer(side)) %in% 1:4)
     if (length(ticks) == 1){
@@ -220,7 +210,17 @@ axis.intervals <- function(side=1, ticks = axTicks(side), atLabels = NULL, label
     axis(side, at = atLabels, labels = labels, tick = FALSE, ...)
 }
 
-node_bivplotmod <- function (mobobj, which = NULL, id = TRUE, pop = TRUE, pointcol = "black", 
+#-------------------------------
+# Plotting regression line at leaves
+#-------------------------------
+
+# grapcon_generator function to draw regression line with partial residuals
+#   at terminal nodes
+
+# Parameters: see ?node_bivplot
+
+node_bivplotmod <- function (mobobj, which = NULL, id = TRUE, 
+  pop = TRUE, pointcol = "black", 
   pointcex = 0.5, boxcol = "black", boxwidth = 0.5, boxfill = "lightgray", 
   bg = "white", fitmean = TRUE, linecol = "red", lwd = 1, pch = 1,
   cdplot = FALSE, fivenum = TRUE, breaks = NULL, ylines = NULL, 

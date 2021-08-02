@@ -9,9 +9,18 @@
 #                 Relationship functions
 #---------------------------------------------------
 
-# Dose-response functions
-fconstant <- function(x, Betas) Betas
+#----- Exposure-response functions
+
+# Linear effect
+#   This is the one used in the final simulation version
 flinear <- function(x, Betas) Betas[1] + Betas[2] * x
+
+# Constant (no effect of exposure) - Unused in the final manuscript
+#   Unused in final manuscript
+fconstant <- function(x, Betas) Betas
+
+# J-shape mimicking temperature-mortality associations
+#   Unused in final manuscript
 fJshape <- function(x, Betas){
   pow <- outer(x, 0:4, "^")
   pow %*% Betas
@@ -20,7 +29,26 @@ fJshape <- function(x, Betas){
 #---------------------------------------------------
 #              Data generating function
 #---------------------------------------------------
-#' Generate data for testing threshold finding methods
+
+# This function generates simulated data to be used for threshold evaluation
+
+# Parameters
+#   n   Number of simulated observations
+#   p   Number of exposure variables
+#   ncat  Number of categories for categorical variables. NA for continuous
+#         variables
+#   obetas  Outer betas: relative weights of the different exposure variables
+#   ffuns   Character vector of exposure-response functions
+#   fbetas  List of parameters for each function in ffuns
+#   s   Thresholds
+#   stype   How s is defined, either as absolute value, either as quantile of
+#           of the distribution of its respective exposure variables
+#   extBetas    Magnitude of extreme effect
+#   YdepOrder   Autoregressive order for simulated response. 
+#               0 for no autocorrelation
+#   rho   Correlation between exposures
+#   rand.gen    Random generator: either rnorm or rpois
+#   noise.sd    Noise standard deviation
 
 generate.data <- function(n = 1000, p = 2, ncat = NA, 
   obetas = 1, ffuns = "fconstant", fbetas = list(), 

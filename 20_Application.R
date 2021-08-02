@@ -9,22 +9,34 @@
 #                    Journal
 #########################################################
 
-library(hhws)
-library(splines)
-library(forecast)
-library(earth)
-library(quantmod)
+#----- Packages
+library(earth) # MARS
+library(mgcv) # GAM
+library(partykit) # MOB
+library(AIM) # AIM
+library(primr) # PRIM (custom package, must be installed from github 
+                # devtools::install_github("PierreMasselot/primr"))
+library(splines) # Spline functions
+library(colorspace) # Color palettes
+library(hhws) # Functions for HHWS, must be installed from github 
+              # devtools::install_github("PierreMasselot/hhws")
+library(parallel) # Parallel computing
+
+
+
+library(forecast) # Time series functions
+
+library(quantmod) 
 library(RColorBrewer)
 library(sm)
 library(devtools)
-library(mgcv)
-library(partykit)
-library(AIM)
-library(primr)
-library(colorspace)
-library(parallel)
+
+
       
+#----- Load other functions
+# Miscellaneous functions
 source("00_Misc_functions.R")
+# Wrappers to extract thresholds through the proposed methods
 source("01_Threshold_functions.R")
 
 #---------------------------------------------------
@@ -54,11 +66,13 @@ cutPts <- seq(30, 50, 5)
 dataread <- read.table("Data.csv", header = T, sep=";")
 dataread$Date <- as.POSIXlt(apply(dataread[,1:3], 1, paste, collapse = "-"))
 
-# Extract months of interest
+# Extract summer months
 datatab <- subset(dataread, Month %in% which.months)
+
+# Create day-of-season variable
 datatab$dos <- unlist(tapply(datatab[,1], datatab$Year, seq_along))
 
-# Extract variables of interest
+# Select variables
 datatab <- datatab[,c(which.Y, which.X, "Year", "dos")]
 datatab$Tmoy <- rowMeans(datatab[,which.X])
 
@@ -72,7 +86,6 @@ p <- length(which.X)
 #---------------------------------------------------
 
 L <- length(Lweights)
-# indicator.names <- sprintf("Z%s", which.X)
 indicator.names <- which.X
 
 # Compute the moving-average
@@ -84,21 +97,29 @@ indicators[which(diff(datatab$Date, L) > L) + L,] <- NA
 # Adding indicators to the data table
 datatab[,indicator.names] <- indicators
 
-# Remove NAs from data table
+# Remove NAs from data
 datatab <- na.omit(datatab)
 n <- nrow(datatab)
 
 #---------------------------------------------------
 #            Algorithms application
 #---------------------------------------------------
+
+# Initialize results
 results <- list()
 
 #----- Model-based regression trees (MOB) -----
+
+# Grow the tree 
 treefit <- glmtree(Death ~ Tmoy + ns(dos, 4) + ns(Year, round(nyear / 10)) | 
   Tmin + Tmax, data = datatab, family = "quasipoisson", minsize = 10)
 
 # Extract thresholds from the tree object
 results[["MOB"]] <- extractThresholds_party(treefit)$thresholds
+
+# Infer best surrogate split for Tmin
+surrfit <- glmtree(factor(Tmax > results[["MOB"]][2]) ~ Tmin, data = datatab, 
+  family = "binomial", maxdepth = 2, minsize = 10)
 
 # Plot the tree
 x11(width = 17, height = 7)
@@ -109,10 +130,10 @@ plot(treefit, ip_args = list(id = FALSE, pval = FALSE),
 
 dev.print(png, filename = "Results/Fig2_MOB.png", 
   units = "in", res = 100)
-# dev.copy2eps(file = sprintf("%s/FigS1_MOB.eps", result_path))
-
 
 #----- Multivariate adaptive regression splines (MARS) -----
+
+# Fit MARS
 marsfit <- earth(Death ~ Tmin + Tmax + dos + Year, 
   data = datatab, degree = p, endspan = 10, 
   glm = list(family = "quasipoisson"))
@@ -120,7 +141,10 @@ marsfit <- earth(Death ~ Tmin + Tmax + dos + Year,
 # Extract thresholds
 results[["MARS"]] <- apply(marsfit$cuts[,indicator.names], 2, max)
 
-# Plot the surface
+
+## Plot the surface
+
+# Coordinate grid for the surface
 surfgrid <- do.call(expand.grid, 
   lapply(datatab[,indicator.names], 
     function(x) seq(min(x), max(x), length.out = 1000) )
@@ -128,6 +152,7 @@ surfgrid <- do.call(expand.grid,
 datpred <- cbind(surfgrid, dos = mean(datatab$dos), Year = mean(datatab$Year))
 surf <- matrix(predict(marsfit, datpred, type = "response"), nrow = 1000)
 
+# Level plot
 x11()
 filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surf, zlim = range(surf), 
   color.palette = function(n) sequential_hcl(n, rev = T), cex.axis = 1.2,
@@ -149,8 +174,6 @@ filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surf, zlim = range(su
 
 dev.print(png, filename = "Results/Fig3_MARS.png", 
   units = "in", res = 100)
-dev.copy2eps(file = "Results/Fig3_MARS.eps")
-
 
 
 #----- Patient rule-induction method (PRIM) -----
@@ -168,19 +191,8 @@ peelres <- peeling(datatab$Death, datatab[,indicator.names],
     return(exp(pred))
 })
 
-# Plot and analyze the trajectory
+# Choose number of observations above threshold (by analyzing peeling trajectory)
 chosen <- 11
-
-x11()
-plot_trajectory(peelres, pch = 16, col = cols[3], ylab = "RR increase rate", 
-  xlim = c(0, 0.02), support = chosen/n, abline.pars = list(lwd = 2, lty = 2),
-  ytype = "rel.diff")
-mtext(sprintf("n = %i", chosen), at = chosen/n, cex = 1.5, line = 0.5)
-
-dev.print(png, filename = "Results/Fig4_PRIM.png", 
-  units = "in", res = 100)
-dev.copy2eps(file = "Results/Fig4_PRIM.eps")
-
 
 # Thresholds refinement by pasting 
 primres <- pasting(peelres, support = chosen/n)
@@ -188,7 +200,18 @@ primres <- pasting(peelres, support = chosen/n)
 # Thresholds extraction
 results[["PRIM"]] <- sapply(extract.box(primres)$limits[[1]], "[", 1) 
 
+# Plotting the peeling trajectory
+x11(width = 11)
+plot_trajectory(peelres, pch = 16, col = cols[3], ylab = "RR increase rate", 
+  xlim = c(0.002, 0.02), support = chosen/n, abline.pars = list(lwd = 2, lty = 2),
+  ytype = "rel.diff", cex = 1.5)
+mtext(sprintf("n = %i", chosen), at = chosen/n, cex = 1.5, line = 0.5)
+
+dev.print(png, filename = "Results/Fig4_PRIM.png", 
+  units = "in", res = 100)
+
 #----- Adaptive index models (AIM) -----
+
 # Cross-validation to obtain the optimal number of steps
 cvb <- cv.lm.main(datatab[,c("Tmin", "Tmax", "dos", "Year")], datatab$Death, 
   nsteps = 3 * 4, maxnumcut = 3, backfit = T, mincut = 10/n)
@@ -203,10 +226,11 @@ maxrules <- aggregate(rules[,2], by = list(var = rules[,1]), max)
 results[["AIM"]] <- rep(NA_real_, p)
 results[["AIM"]][maxrules$var[1:2]] <- maxrules$x[1:2]
 
-# Plot the index
+# Predict index on the grid defined above for MARS surface
 surfaim <- matrix(index.prediction(rules, datpred), nrow = 1000)
 predscores <- sort(unique(c(surfaim)))
 
+# Plot the surface
 x11()
 filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surfaim,
   color.palette = function(n) hcl.colors(n, "YlOrBr", rev = T), cex.axis = 1.2,
@@ -235,38 +259,7 @@ dev.print(png, filename = "Results/Fig5_AIM.png",
 dev.copy2eps(file = "Results/Fig5_AIM.eps")
 
 
-#----- Threshold regression -----
-#threshfit <- chngptm(formula.1 = Death ~ ns(dos, 4) + ns(Year, round(nyear / 10)),
-#  formula.2 = ~ Tmin + Tmax, data = datatab, family = "quasipoisson",
-#  type = "stegmented")
-
-
-#----- Generalized additive models (GAM) -----
-# gamfit <- gam(Death ~ s(Tmin) + s(Tmax) + s(dos) + s(Year), 
-#   data = datatab, family = quasipoisson())
-# 
-# # Extract thresholds
-# results[["GAM"]] <- extractThresholds_gam(gamfit)[1:2]
-# 
-# # Plot the fitted functions with thresholds
-# x11(width = 15)
-# par(mfrow = c(1,2))
-# for (j in 1:p){
-#   plot(gamfit, select = j, shade = TRUE, shade.col = cols[5], lwd = 2, 
-#     rug = FALSE, cex.lab = 1.3, cex.axis = 1.2, ylab = "Estimated function")
-#   abline(h = 0, lty = 3)
-#   abline(v = results[["GAM"]][j], lwd = 2, lty = 2)
-#   mtext(formatC(results[["GAM"]][j]), at = results[["GAM"]][j], 
-#     cex = 1.5, line = 0.5)
-# }
-# 
-# if (SAVE){
-#   dev.print(png, filename = sprintf("%s/FigS5_GAM.png", result_path), 
-#     units = "in", res = 100)
-#   dev.copy2eps(file = sprintf("%s/FigS5_GAM.eps", result_path))
-# }
-
-# Saving estimated thresholds
+#----- Saving estimated thresholds
 thresholds <- Reduce(rbind, results)
 rownames(thresholds) <- names(results)
 write.table(thresholds, 

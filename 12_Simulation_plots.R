@@ -14,31 +14,32 @@ load("Results/11_Results_simulations.RData")
 # Number of models
 nm <- ncol(sensitivity[[1]])
 
-# Number of each paremeters for plots
+# Grid length for each parameter for plots
 nr <- length(varParams$rho)
 nt <- length(varParams$extType)
 
-# X axis of plot
+# Prepare X axis of plot
 xvals <- 100 * unlist(varParams$extBetas)
 nx <- length(xvals)
 atx <- 1:(nm * nx) + rep(1:nx, each = nm)
 atticks <- tapply(atx, rep(1:nx, each = nm), max)[-nx] + 1
 atlabels <- tapply(atx, rep(1:nx, each = nm), mean)
 
-# Model specific aesthetics
+# Model specific aesthetics (MOB, MARS, PRIM, AIM, GAM, SEG)
 pal <- c("forestgreen", "cornflowerblue", "firebrick", "goldenrod", 
   "lightskyblue", "slategrey")
 pchs <- 15:20
 
 #----------------------------------------------------------------
-#                         F1-score plot
+#     Figure 1: F-score plot
 #----------------------------------------------------------------
 
-# Compute summary statistics of the criterion
+# Compute mean and 95 percent CI from simulated scores
 medianf1 <- sapply(F1, apply, 2, mean, na.rm = T) 
 quantlowf1 <- sapply(F1, apply, 2, quantile, .025, na.rm = T) 
 quanthighf1 <- sapply(F1, apply, 2, quantile, .975, na.rm = T)
 
+# Initialize plot
 x11(width = 15)
 par(oma = c(0, 0, 2, 0), mar = c(3, 4, 4, 2) + .1)
 layout(rbind(matrix(1:(nr * nt), nrow = nr, ncol = nt), (nr*nt) + 1),
@@ -77,19 +78,20 @@ plot.new()
 legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
+# Save
 dev.print(png, filename = "Results/Fig1_Simu_F.png", 
   units = "in", res = 100)
-dev.copy2eps(file = "Results/Fig1_Simu_F.eps")
 
 #----------------------------------------------------------------
-#                         Sensitivity
+#   Figure S1: Sensitivity
 #----------------------------------------------------------------
 
-# Compute summary statistics of the criterion
+# Compute mean and 95 percent CI from simulated scores
 mediansens <- sapply(sensitivity, apply, 2, mean, na.rm = T) 
 quantlowsens <- sapply(sensitivity, apply, 2, quantile, .025, na.rm = T) 
 quanthighsens <- sapply(sensitivity, apply, 2, quantile, .975, na.rm = T)
 
+# Initialize plot
 x11(width = 15)
 par(oma = c(0, 0, 2, 0), mar = c(3, 4, 4, 2) + .1)
 layout(rbind(matrix(1:(nr * nt), nrow = nr, ncol = nt), (nr*nt) + 1),
@@ -128,18 +130,20 @@ plot.new()
 legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
+# Save
 dev.print(png, filename = "Results/FigSup1_Simu_sens.png", 
   units = "in", res = 100)
 
 #----------------------------------------------------------------
-#                         Precision
+#   Figure S2: Precision
 #----------------------------------------------------------------
 
-# Compute summary statistics of the criterion
+# Compute mean and 95 percent CI from simulated scores
 medianprec <- sapply(precision, apply, 2, mean, na.rm = T) 
 quantlowprec <- sapply(precision, apply, 2, quantile, .025, na.rm = T) 
 quanthighprec <- sapply(precision, apply, 2, quantile, .975, na.rm = T)
 
+# Initialize plot
 x11(width = 15)
 par(oma = c(0, 0, 2, 0), mar = c(3, 4, 4, 2) + .1)
 layout(rbind(matrix(1:(nr * nt), nrow = nr, ncol = nt), (nr*nt) + 1),
@@ -178,5 +182,6 @@ plot.new()
 legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
+# Save
 dev.print(png, filename = "Results/FigSup2_Simu_prec.png", 
   units = "in", res = 100)
