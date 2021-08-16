@@ -28,6 +28,7 @@ library(colorspace) # Color palettes
 library(hhws) # Functions for HHWS, must be installed from github 
               # devtools::install_github("PierreMasselot/hhws")
 library(parallel) # Parallel computing
+library(tools) # For compacting pdfs
 
 
 
@@ -147,7 +148,6 @@ marsfit <- earth(Death ~ Tmin + Tmax + dos + Year,
 # Extract thresholds
 results[["MARS"]] <- apply(marsfit$cuts[,indicator.names], 2, max)
 
-
 ## Plot the surface
 
 # Coordinate grid for the surface
@@ -179,7 +179,8 @@ filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]),
   },
 )
 
-dev.print(pdf, file = "Results/Figure3.pdf")
+# dev.print(pdf, file = "Results/Figure3.pdf")
+dev.print(png, filename = "Results/Figure3.png", units = "in", res = 600)
 
 
 #----- Patient rule-induction method (PRIM) -----
@@ -259,7 +260,8 @@ filled.contour(unique(surfgrid[,1]), unique(surfgrid[,2]), surfaim,
   }
 )
 
-dev.print(pdf, file = "Results/Figure5.pdf")
+# dev.print(pdf, file = "Results/Figure5.pdf")
+dev.print(png, filename = "Results/Figure5.png", units = "in", res = 600)
 
 
 #----- Saving estimated thresholds
