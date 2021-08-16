@@ -1,9 +1,18 @@
-####################################################
+################################################################################
+#                              R code 
+#                                                  
+#     Machine learning approaches to identify thresholds in a heat-health 
+#                      warning system context
+#         Journal of the Royal Statistical Society - Series A
+#                               2021
 #
-#             Threshold finding methods
+#                   Threshold estimation functions
 #
-####################################################
+#                    Code Author: Pierre Masselot
+#
+################################################################################
 
+# Script sourced in the main analyses.
 # Wrapper functions for the threshold estimation methods. All functions
 #   apply the method and extract the thresholds from it.
 
@@ -48,6 +57,9 @@ MOB.apply <- function(yb, xb, zb = NULL, ...){
 #---------------------------
 # Multivariate adaptive regression splines
 #---------------------------
+
+# endspan: Minimum number of observation outside the end knots for each
+#   variable.
 
 MARS.apply <- function(yb, xb, zb = NULL, endspan, ...){
   datab <- data.frame(y = yb, x = xb)
@@ -97,6 +109,9 @@ MARS.apply <- function(yb, xb, zb = NULL, endspan, ...){
 # Patient rule-induction method
 #---------------------------
 
+# RRind: Indices from zb indicating the variables for which we want to 
+#   maximize RR
+
 PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb), 
   family = "gaussian", ...)
 {
@@ -136,6 +151,9 @@ PRIM.apply <- function(yb, xb, zb = NULL, RRind = 1:ncol(zb),
 #---------------------------
 # Adaptive index models
 #---------------------------
+
+# numcut: max number of cutting points on each variable. 
+# mincut: minimum number of observation outside extreme cutpoints.
 
 AIM.apply <- function(yb, xb, zb = NULL, numcut = 3, mincut, ...){  
   keep <- complete.cases(yb)
@@ -235,6 +253,10 @@ GAM.apply <- function(yb, xb, zb = NULL, ...){
 #---------------------------
 # Segmented regression
 #---------------------------
+
+# glmpars: list of parameters for the function 'glm' on which the segmented
+#   regression is applied.
+# segpars: list of parameters for the 'segmented' function.
 
 seg.apply <- function(yb, xb, zb = NULL, glmpars = list(), segpars = list())
 {

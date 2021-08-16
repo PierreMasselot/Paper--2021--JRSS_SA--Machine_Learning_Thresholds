@@ -1,3 +1,21 @@
+################################################################################
+#                              R code 
+#                                                  
+#     Machine learning approaches to identify thresholds in a heat-health 
+#                      warning system context
+#         Journal of the Royal Statistical Society - Series A
+#                               2021
+#
+#                        Useful custom functions
+#
+#                    Code Author: Pierre Masselot
+#
+################################################################################
+
+# Script sourced in the main analyses.
+# This script contains several custom functions useful in either the 
+#   simulation of application par of the paper.
+
 #-------------------------------
 # Computes the F-score using observed and predicted indices of the event.
 #-------------------------------
@@ -215,7 +233,8 @@ axis.intervals <- function(side = 1, ticks = axTicks(side), atLabels = NULL,
 #-------------------------------
 
 # grapcon_generator function to draw regression line with partial residuals
-#   at terminal nodes
+#   at terminal nodes. Created by adapting  the 
+#   node_bivplot function in package partykit
 
 # Parameters: see ?node_bivplot
 

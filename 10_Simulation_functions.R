@@ -1,9 +1,20 @@
-#########################################################
-#
-#            Parametric simulations
-#         Part 0: Simulation functions
+################################################################################
+#                              R code 
 #                                                  
-#########################################################
+#     Machine learning approaches to identify thresholds in a heat-health 
+#                      warning system context
+#         Journal of the Royal Statistical Society - Series A
+#                               2021
+#
+#                        Simulation functions
+#
+#                    Code Author: Pierre Masselot
+#
+################################################################################
+
+# This script contains the functions used to generate synthetic data in 
+#   the simulation study. The main function is generate.data and the other
+#   implement specific relationship shapes between X and Y.
 
 #---------------------------------------------------
 #                 Relationship functions

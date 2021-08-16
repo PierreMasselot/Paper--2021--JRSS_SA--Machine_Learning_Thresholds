@@ -1,8 +1,18 @@
-#########################################################
-#
-#            Parametric simulations in paper
+################################################################################
+#                              R code 
 #                                                  
-#########################################################
+#     Machine learning approaches to identify thresholds in a heat-health 
+#                      warning system context
+#         Journal of the Royal Statistical Society - Series A
+#                               2021
+#
+#                        Simulation study
+#
+#                   Code Author: Pierre Masselot
+#
+################################################################################
+
+# This script implements the simulation study of section 4.
 
 #----- Packages
 library(earth) # MARS

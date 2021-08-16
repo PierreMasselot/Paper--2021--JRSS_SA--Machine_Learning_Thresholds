@@ -1,9 +1,19 @@
-#########################################################
-#
-#            Parametric simulations in paper
-#                 Plots of the results
+################################################################################
+#                              R code 
 #                                                  
-#########################################################
+#     Machine learning approaches to identify thresholds in a heat-health 
+#                      warning system context
+#         Journal of the Royal Statistical Society - Series A
+#                               2021
+#
+#                        Simulation functions
+#
+#                    Code Author: Pierre Masselot
+#
+################################################################################
+
+# This script plots results from the simulation study. Must be executed after
+#   11_Simulations.R
 
 load("Results/11_Results_simulations.RData")
 
@@ -79,8 +89,7 @@ legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
 # Save
-dev.print(png, filename = "Results/Fig1_Simu_F.png", 
-  units = "in", res = 100)
+dev.print(pdf, file = "Results/Figure1.pdf")
 
 #----------------------------------------------------------------
 #   Figure S1: Sensitivity
@@ -131,8 +140,7 @@ legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
 # Save
-dev.print(png, filename = "Results/FigSup1_Simu_sens.png", 
-  units = "in", res = 100)
+dev.print(pdf, file = "Results/FigSup1.pdf")
 
 #----------------------------------------------------------------
 #   Figure S2: Precision
@@ -183,5 +191,4 @@ legend("center", legend = colnames(sensitivity[[1]]), pch = pchs, lwd = 2,
   col = pal, ncol = nm, bty = "n", cex = 1.5)
 
 # Save
-dev.print(png, filename = "Results/FigSup2_Simu_prec.png", 
-  units = "in", res = 100)
+dev.print(pdf, file = "Results/FigSup2.pdf")
