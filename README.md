@@ -3,7 +3,7 @@
 
 R code and data reproducing results in the article:
 
-Masselot P, Chebana F, Campagna C, Lavigne É, Ouarda TBMJ, Gosseling P. Machine learning approaches to identify thresholds in a heat-health warning system context. *Journal of the Royal Statistical Society: Series A (Statistics in Society)*. **In Press**.
+Masselot P, Chebana F, Campagna C, Lavigne É, Ouarda TBMJ, Gosseling P. Machine learning approaches to identify thresholds in a heat-health warning system context. *Journal of the Royal Statistical Society: Series A (Statistics in Society)*. 2021;184(4), 1326–1346. DOI: [10.1111/rssa.12745](https://doi.org/10.1111/rssa.12745)
 
 ## Description
 
